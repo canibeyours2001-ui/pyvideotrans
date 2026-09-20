@@ -1,0 +1,15 @@
+{
+  "id": "__KAGGLE_USERNAME__/pyvideotrans-gpu-worker",
+  "title": "pyvideotrans-gpu-worker",
+  "code_file": "worker.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "__KAGGLE_USERNAME__/pyvideotrans-input"
+  ],
+  "kernel_sources": [],
+  "competition_sources": []
+}

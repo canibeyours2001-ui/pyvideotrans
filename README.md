@@ -190,6 +190,92 @@ uv add nvidia-cublas-cu12 nvidia-cudnn-cu12
 * **Online Q&A Community**: [https://bbs.pyvideotrans.com](https://bbs.pyvideotrans.com) (Submit error logs for automated AI analysis and answers)
 * **GitHub Wiki**: [architecture.md](docs/architecture.md) | [cli.md](docs/cli.md) | [webui.md](docs/webui.md) | [Synchronize.md](docs/Synchronize.md) | [faq.md](docs/faq.md)
 
+## pyVideoTrans Hybrid GitHub + Kaggle Pipeline
+
+This repository includes a hybrid cloud pipeline that splits work safely:
+
+- **GitHub Actions (CPU):** orchestration, input download, Kaggle job control, subtitle validation, FFmpeg final rendering, artifact upload.
+- **Kaggle (GPU):** pyVideoTrans speech-to-text processing with Whisper `large-v3`.
+
+### Architecture
+
+```text
+input.mp4
+  -> GitHub Actions
+  -> private Kaggle dataset
+  -> private Kaggle GPU kernel
+  -> gpu_output/subtitles.srt
+  -> GitHub Actions FFmpeg render
+  -> final/final.mp4 (artifact)
+```
+
+### Required GitHub repository secrets
+
+Go to:
+`GitHub Repository -> Settings -> Secrets and variables -> Actions -> New repository secret`
+
+Create:
+
+1. `KAGGLE_USERNAME`
+   - Value: your Kaggle username
+   - Source: Kaggle account profile URL
+2. `KAGGLE_KEY`
+   - Value: Kaggle API key
+   - Source: Kaggle -> Account -> API -> Create New Token (`kaggle.json`, use `key`)
+3. `INPUT_VIDEO_URL`
+   - Value: direct downloadable URL for your source video (`input.mp4`)
+   - Source: your own storage/link provider
+
+> Do not commit credentials, `kaggle.json`, source videos, or generated large outputs.
+
+### Workflow file
+
+- `.github/workflows/pyvideotrans.yml`
+
+### How to run
+
+1. Open `GitHub Repository -> Actions`.
+2. Select **pyVideoTrans Hybrid Pipeline**.
+3. Click **Run workflow**.
+4. Keep default inputs for milestone 1 unless you need custom Kaggle slugs.
+5. Click **Run workflow** to start.
+
+### Where to watch progress
+
+1. `Actions -> pyVideoTrans Hybrid Pipeline -> latest run`
+2. Check logs for these steps:
+   - dataset publish
+   - kernel launch and monitor
+   - Kaggle output download
+   - subtitle validation
+   - FFmpeg render
+
+### Where to download final.mp4
+
+After success:
+
+1. Open the workflow run summary page.
+2. Find **Artifacts**.
+3. Download `pyvideotrans-final-mp4`.
+4. Extract `final.mp4` (and `subtitles.srt`).
+
+Artifact retention is set to **1 day**.
+
+### Troubleshooting
+
+- **Missing secret error:** verify `KAGGLE_USERNAME`, `KAGGLE_KEY`, `INPUT_VIDEO_URL` names exactly.
+- **Kaggle auth failure:** regenerate Kaggle token and update `KAGGLE_KEY`.
+- **Dataset/Kaggle push failure:** confirm Kaggle account has API enabled and kernel/dataset names are valid.
+- **Kernel fails:** open Kaggle notebook logs for the pushed kernel (`<username>/pyvideotrans-gpu-worker`) and inspect worker output.
+- **No SRT found:** workflow prints downloaded Kaggle file list before failing.
+- **FFmpeg render failure:** workflow validates with `ffprobe` and fails fast with logs.
+
+### Security notes
+
+- The pipeline uses GitHub secrets and never writes credentials into tracked files.
+- Temporary Kaggle credential file is created at runtime and removed in cleanup.
+- Input video stays outside repository history and is downloaded only during workflow execution.
+
 ##  Disclaimer
 
 This software is an open-source, free, non-commercial project. Users are solely responsible for any legal consequences arising from the use of this software (including but not limited to calling third-party APIs or processing copyrighted video content). Please comply with local laws and regulations and the terms of use of relevant service providers.
@@ -213,5 +299,4 @@ This project mainly relies on the following open-source projects (partial):
 ---
 
 *Created by [jianchang512](https://github.com/jianchang512)*
-
 

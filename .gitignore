@@ -63,3 +63,15 @@ __pycache__
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Pipeline/Kaggle sensitive and runtime files
+.env
+.env.*
+kaggle.json
+.kaggle/
+input/
+final/
+kaggle_output/
+kaggle_dataset/
+kaggle_kernel_work/
+gpu_output/
