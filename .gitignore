@@ -46,6 +46,9 @@ kaggle.json
 .env
 .env.*
 credentials/
+rclone.conf
+*.rclone.conf
+.rclone/
 *token*
 *secret*
 

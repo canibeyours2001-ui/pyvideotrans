@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   hybrid-stt:
     runs-on: ubuntu-latest
@@ -46,12 +50,12 @@ jobs:
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-          INPUT_VIDEO_URL: ${{ secrets.INPUT_VIDEO_URL }}
+          RCLONE_MEGA_CONFIG: ${{ secrets.RCLONE_MEGA_CONFIG }}
         run: |
           set -euo pipefail
           [[ -n "${KAGGLE_USERNAME:-}" ]] || { echo "Missing required secret: KAGGLE_USERNAME"; exit 1; }
           [[ -n "${KAGGLE_API_TOKEN:-}" ]] || { echo "Missing required secret: KAGGLE_API_TOKEN"; exit 1; }
-          [[ -n "${INPUT_VIDEO_URL:-}" ]] || { echo "Missing required secret: INPUT_VIDEO_URL"; exit 1; }
+          [[ -n "${RCLONE_MEGA_CONFIG:-}" ]] || { echo "Missing required secret: RCLONE_MEGA_CONFIG"; exit 1; }
 
       - name: Show runner capacity
         shell: bash
@@ -66,11 +70,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes ffmpeg jq
+          sudo apt-get install --yes ffmpeg jq rclone
           python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade kaggle gdown
+          python3 -m pip install --upgrade kaggle
           kaggle --version
-          gdown --version
+          rclone version
 
       - name: Authenticate Kaggle CLI
         shell: bash
@@ -80,51 +84,158 @@ jobs:
           set -euo pipefail
           kaggle datasets list --page-size 1 >/dev/null
 
-      - name: Download and validate input video
+      - name: Authenticate MEGA storage
         shell: bash
         env:
-          INPUT_VIDEO_URL: ${{ secrets.INPUT_VIDEO_URL }}
+          RCLONE_MEGA_CONFIG: ${{ secrets.RCLONE_MEGA_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export RCLONE_CONFIG="${RUNNER_TEMP}/pyvideotrans.rclone.conf"
+          config_tmp="${RCLONE_CONFIG}.tmp"
+          if ! printf '%s' "${RCLONE_MEGA_CONFIG}" | base64 --decode >"${config_tmp}"; then
+            rm -f "${config_tmp}" "${RCLONE_CONFIG}"
+            echo "RCLONE_MEGA_CONFIG is not valid Base64."
+            exit 1
+          fi
+          chmod 600 "${config_tmp}"
+          mv -f "${config_tmp}" "${RCLONE_CONFIG}"
+          auth_log="${RUNNER_TEMP}/rclone-auth.log"
+          if ! rclone lsd "megadrive:" > /dev/null 2>"${auth_log}"; then
+            rm -f "${auth_log}" "${RCLONE_CONFIG}"
+            echo "MEGA authentication failed. Verify the RCLONE_MEGA_CONFIG secret and megadrive remote."
+            exit 1
+          fi
+          rm -f "${auth_log}"
+          echo "RCLONE_CONFIG=${RCLONE_CONFIG}" >> "${GITHUB_ENV}"
+
+      - name: Discover MEGA input
+        shell: bash
         run: |
           set -euo pipefail
           rm -rf "${INPUT_DIR}" "${FINAL_DIR}" "${GITHUB_WORKSPACE}/.kaggle-staging"
           mkdir -p "${INPUT_DIR}" "${FINAL_DIR}" "${DATASET_DIR}" "${KERNEL_DIR}" "${KAGGLE_OUTPUT_DIR}"
-          download_log="${RUNNER_TEMP}/input-video-download.log"
-          case "${INPUT_VIDEO_URL}" in
-            https://drive.google.com/*|http://drive.google.com/*|https://www.drive.google.com/*|http://www.drive.google.com/*)
-              if ! gdown --fuzzy --continue --retries 3 --quiet --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}" >"${download_log}" 2>&1; then
-                echo "Google Drive download failed. Verify the file is shared for direct download without login or CAPTCHA."
-                rm -f "${download_log}"
-                exit 1
-              fi
-              ;;
-            http://*|https://*)
-              if ! curl --fail --location --retry 3 --retry-delay 3 --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}" >"${download_log}" 2>&1; then
-                echo "HTTP download failed. Verify INPUT_VIDEO_URL is reachable by GitHub Actions."
-                rm -f "${download_log}"
-                exit 1
-              fi
-              ;;
-            *)
-              echo "Unsupported INPUT_VIDEO_URL scheme; use an HTTP(S) or Google Drive URL."
-              exit 1
-              ;;
-          esac
-          rm -f "${download_log}"
-          [[ -s "${INPUT_VIDEO_PATH}" ]] || { echo "Downloaded input video is empty"; exit 1; }
+          listing="${RUNNER_TEMP}/mega-input.json"
+          if ! rclone lsjson --files-only "megadrive:pyvideotrans" >"${listing}" 2>/dev/null; then
+            rm -f "${listing}"
+            echo "Unable to list MEGA input folder megadrive:pyvideotrans."
+            exit 1
+          fi
+          selection="$(python3 - "${listing}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          supported = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
+          entries = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          videos = [
+              item for item in entries
+              if str(item.get("Name", "")).lower().endswith(supported)
+          ]
+          if not videos:
+              raise SystemExit("No supported video found in megadrive:pyvideotrans")
+          if len(videos) > 1:
+              print("More than one supported video found in megadrive:pyvideotrans:", file=sys.stderr)
+              for item in videos:
+                  print(f" - {item.get('Name', '')}", file=sys.stderr)
+              raise SystemExit(1)
+          name = str(videos[0].get("Name", ""))
+          if not name or any(not char.isprintable() for char in name) or Path(name).name != name:
+              raise SystemExit("MEGA input filename contains unsupported path characters")
+          print(f"{name}\t{int(videos[0].get('Size', 0))}")
+          PY
+          )"
+          rm -f "${listing}"
+          IFS=$'\t' read -r MEGA_SOURCE_NAME MEGA_SOURCE_SIZE <<<"${selection}"
+          safe_name="$(python3 - "${MEGA_SOURCE_NAME}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          name = Path(sys.argv[1]).name
+          safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+          if not safe:
+              raise SystemExit("MEGA input filename cannot be safely represented")
+          print(safe)
+          PY
+          )"
+          stem="$(python3 - "${safe_name}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(sys.argv[1]).stem).strip("._")
+          if not stem:
+              raise SystemExit("MEGA input filename has no usable stem")
+          print(stem)
+          PY
+          )"
+          candidate="${stem}-subtitled.mp4"
+          candidate_listing="${RUNNER_TEMP}/rclone-candidate-list.txt"
+          remote_file_exists() {
+            local remote_path="$1"
+            if rclone lsf --files-only --format p "${remote_path}" >"${candidate_listing}" 2>/dev/null; then
+              return 0
+            else
+              local status=$?
+            fi
+            case "${status}" in
+              3|4) return 1 ;;
+              *) echo "Unable to check MEGA output path safely (rclone exit ${status})."; exit "${status}" ;;
+            esac
+          }
+          if remote_file_exists "megadrive:video-out/${candidate}"; then
+            candidate="${stem}-subtitled-${GITHUB_RUN_ID}.mp4"
+            attempt=1
+            while remote_file_exists "megadrive:video-out/${candidate}"; do
+              candidate="${stem}-subtitled-${GITHUB_RUN_ID}-${attempt}.mp4"
+              attempt=$((attempt + 1))
+            done
+          fi
+          rm -f "${candidate_listing}"
+          INPUT_VIDEO_PATH="${INPUT_DIR}/${safe_name}"
+          echo "MEGA_SOURCE_NAME=${MEGA_SOURCE_NAME}" >> "${GITHUB_ENV}"
+          echo "MEGA_OUTPUT_NAME=${candidate}" >> "${GITHUB_ENV}"
+          echo "INPUT_VIDEO_PATH=${INPUT_VIDEO_PATH}" >> "${GITHUB_ENV}"
+          echo "FINAL_VIDEO_PATH=${FINAL_DIR}/${candidate}" >> "${GITHUB_ENV}"
+          echo "MEGA input: ${MEGA_SOURCE_NAME} (${MEGA_SOURCE_SIZE} bytes)"
+          echo "MEGA output: ${candidate}"
+
+      - name: Download MEGA input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! rclone copyto "megadrive:pyvideotrans/${MEGA_SOURCE_NAME}" "${INPUT_VIDEO_PATH}" --no-traverse >"${RUNNER_TEMP}/rclone-download.log" 2>&1; then
+            rm -f "${RUNNER_TEMP}/rclone-download.log"
+            echo "Failed to download ${MEGA_SOURCE_NAME} from MEGA."
+            exit 1
+          fi
+          rm -f "${RUNNER_TEMP}/rclone-download.log"
+
+      - name: Validate input media
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -s "${INPUT_VIDEO_PATH}" ]] || { echo "Downloaded MEGA input is empty"; exit 1; }
           python3 - "${INPUT_VIDEO_PATH}" <<'PY'
           import sys
           from pathlib import Path
 
           path = Path(sys.argv[1])
-          prefix = path.read_bytes()[:8192].lstrip().lower()
+          with path.open("rb") as stream:
+              prefix = stream.read(8192).lstrip().lower()
           html_markers = (b"<html", b"<!doctype html", b"<head", b"<body")
           if any(prefix.startswith(marker) for marker in html_markers) or b"<html" in prefix:
-              raise SystemExit("Downloaded input appears to be HTML, not a video")
+              raise SystemExit("Downloaded MEGA input appears to be HTML, not a video")
           PY
           input_size="$(stat -c '%s' "${INPUT_VIDEO_PATH}")"
           echo "Downloaded input size: ${input_size} bytes"
-          if ! ffprobe -v error -show_format -show_streams "${INPUT_VIDEO_PATH}" >/dev/null; then
-            echo "ffprobe could not recognize the downloaded file as media."
+          if ! video_stream="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "${INPUT_VIDEO_PATH}")"; then
+            echo "ffprobe could not recognize the downloaded MEGA input as media."
+            exit 1
+          fi
+          if [[ "${video_stream}" != "video" ]]; then
+            echo "ffprobe did not find a video stream in the downloaded MEGA input."
             exit 1
           fi
           cp "${INPUT_VIDEO_PATH}" "${DATASET_DIR}/input.mp4"
@@ -174,7 +285,15 @@ jobs:
 
           text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
           matches = re.findall(r"(?:status|state)\s*:\s*([a-z_]+)", text)
-          print(matches[-1] if matches else "unknown")
+          if matches:
+              print(matches[-1])
+          else:
+              for state in ("complete", "running", "queued", "error", "failed", "cancelled", "canceled"):
+                  if state in text:
+                      print(state)
+                      break
+              else:
+                  print("unknown")
           PY
               )"
               rm -f "${status_output}"
@@ -249,7 +368,15 @@ jobs:
 
           text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
           matches = re.findall(r"(?:status|state)\s*:\s*([a-z_]+)", text)
-          print(matches[-1] if matches else "unknown")
+          if matches:
+              print(matches[-1])
+          else:
+              for state in ("complete", "running", "queued", "error", "failed", "cancelled", "canceled"):
+                  if state in text:
+                      print(state)
+                      break
+              else:
+                  print("unknown")
           PY
             )"
             rm -f "${status_output}"
@@ -306,9 +433,80 @@ jobs:
         with:
           name: pyvideotrans-final-mp4
           path: |
-            ${{ env.FINAL_VIDEO_PATH }}
+            ${{ env.FINAL_DIR }}/*.mp4
             ${{ env.FINAL_DIR }}/subtitles.srt
           retention-days: 1
+
+      - name: Upload final video to MEGA
+        shell: bash
+        run: |
+          set -euo pipefail
+          collision_listing="${RUNNER_TEMP}/rclone-collision-list.txt"
+          if rclone lsf --files-only --format p "megadrive:video-out/${MEGA_OUTPUT_NAME}" >"${collision_listing}" 2>/dev/null; then
+            echo "Refusing to overwrite existing MEGA output: ${MEGA_OUTPUT_NAME}"
+            rm -f "${collision_listing}"
+            exit 1
+          else
+            status=$?
+          fi
+          if [[ "${status}" != "3" && "${status}" != "4" ]]; then
+            rm -f "${collision_listing}"
+            echo "Unable to check existing MEGA output safely (rclone exit ${status})."
+            exit "${status}"
+          fi
+          rm -f "${collision_listing}"
+          if ! rclone copyto "${FINAL_VIDEO_PATH}" "megadrive:video-out/${MEGA_OUTPUT_NAME}" --immutable --no-traverse >"${RUNNER_TEMP}/rclone-upload.log" 2>&1; then
+            rm -f "${RUNNER_TEMP}/rclone-upload.log"
+            echo "Failed to upload ${MEGA_OUTPUT_NAME} to MEGA."
+            exit 1
+          fi
+          rm -f "${RUNNER_TEMP}/rclone-upload.log"
+
+      - name: Verify MEGA output
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_path="megadrive:video-out/${MEGA_OUTPUT_NAME}"
+          size_json="${RUNNER_TEMP}/rclone-output-size.json"
+          listing="${RUNNER_TEMP}/rclone-output-list.txt"
+          if ! rclone size --json "${remote_path}" >"${size_json}" 2>/dev/null; then
+            rm -f "${size_json}"
+            echo "Unable to verify MEGA output ${MEGA_OUTPUT_NAME}."
+            exit 1
+          fi
+          remote_size="$(python3 - "${size_json}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["bytes"])
+          PY
+          )"
+          local_size="$(stat -c '%s' "${FINAL_VIDEO_PATH}")"
+          if [[ "${remote_size}" != "${local_size}" ]]; then
+            rm -f "${size_json}" "${listing}"
+            echo "MEGA output size mismatch for ${MEGA_OUTPUT_NAME}: local=${local_size}, remote=${remote_size}."
+            exit 1
+          fi
+          if ! rclone lsf --files-only --format p "${remote_path}" >"${listing}" 2>/dev/null; then
+            rm -f "${size_json}" "${listing}"
+            echo "Unable to locate MEGA output ${MEGA_OUTPUT_NAME}."
+            exit 1
+          fi
+          remote_count="$(python3 - "${listing}" "${MEGA_OUTPUT_NAME}" <<'PY'
+          import sys
+          from pathlib import Path
+
+          entries = [line for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() if line]
+          print(sum(entry == sys.argv[2] for entry in entries))
+          PY
+          )"
+          rm -f "${size_json}" "${listing}"
+          if [[ "${remote_count}" != "1" ]]; then
+            echo "MEGA output verification found ${remote_count} matching objects for ${MEGA_OUTPUT_NAME}."
+            exit 1
+          fi
+          echo "MEGA output verified: ${MEGA_OUTPUT_NAME} (${remote_size} bytes)"
 
       - name: Cleanup temporary credentials and media
         if: always()
@@ -316,3 +514,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "${GITHUB_WORKSPACE}/.kaggle-staging" "${INPUT_DIR}" "${FINAL_DIR}"
+          rm -f "${RCLONE_CONFIG}" "${RCLONE_CONFIG}.tmp" \
+            "${RUNNER_TEMP}/rclone-auth.log" "${RUNNER_TEMP}/rclone-download.log" \
+            "${RUNNER_TEMP}/rclone-upload.log" "${RUNNER_TEMP}/rclone-output-size.json" \
+            "${RUNNER_TEMP}/rclone-output-list.txt" "${RUNNER_TEMP}/rclone-candidate-list.txt" \
+            "${RUNNER_TEMP}/rclone-collision-list.txt" "${RUNNER_TEMP}/mega-input.json"

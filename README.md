@@ -128,13 +128,14 @@ uv run cli.py --task tts --name "./subs.srt" --voice_role "zh-CN-YunyangNeural"
 ### GitHub Actions + Kaggle GPU STT
 
 This fork includes an opt-in `workflow_dispatch` pipeline at
-`.github/workflows/pyvideotrans-hybrid.yml`. GitHub Actions downloads a private
-input video, publishes it to a private Kaggle dataset, and starts a private
-Kaggle GPU kernel. The kernel checks out the exact triggering commit of this
-fork, runs the current headless faster-whisper `large-v3` STT path with CUDA,
-and exports the stable contract `gpu_output/subtitles.srt`. GitHub then downloads
-that subtitle file, burns it into the original video with CPU FFmpeg, and uploads
-`final.mp4` as a one-day artifact.
+`.github/workflows/pyvideotrans-hybrid.yml`. GitHub Actions discovers exactly
+one supported video in `megadrive:pyvideotrans`, downloads it, publishes it to
+a private Kaggle dataset, and starts a private Kaggle GPU kernel. The kernel
+checks out the exact triggering commit of this fork, runs the current headless
+faster-whisper `large-v3` STT path with CUDA, and exports the stable contract
+`gpu_output/subtitles.srt`. GitHub then downloads that subtitle file, burns it
+into the original video with CPU FFmpeg, uploads the finished MP4 to
+`megadrive:video-out`, and retains the GitHub artifact for one day.
 
 Before dispatching the workflow, add these repository secrets under
 **Settings -> Secrets and variables -> Actions**:
@@ -142,8 +143,9 @@ Before dispatching the workflow, add these repository secrets under
 * `KAGGLE_USERNAME`: the Kaggle account that owns the private dataset and kernel.
 * `KAGGLE_API_TOKEN`: a current Kaggle API token for that account. It is injected
   only as an environment variable and is never written to the repository.
-* `INPUT_VIDEO_URL`: a private, downloadable URL for the input MP4. The URL is
-  used only by the workflow and is not printed.
+* `RCLONE_MEGA_CONFIG`: the Base64-encoded `rclone.conf` containing the
+  `megadrive` remote. It is reconstructed only in a restrictive temporary file
+  on the GitHub runner and is never sent to Kaggle or printed.
 
 The Kaggle account must be allowed to use the selected GPU accelerator. The
 workflow defaults to `NvidiaTeslaT4` and allows the accelerator and timeout to
@@ -152,7 +154,8 @@ because the worker must install dependencies, download the Whisper model, and
 fetch the exact repository revision. No translation, TTS, voice cloning, or
 lip-sync stages are included in this first milestone; future GPU stages can be
 inserted after the worker's STT output contract, while CPU rendering remains on
-GitHub.
+GitHub. Existing files in `megadrive:video-out` are never silently overwritten;
+the workflow adds the GitHub run ID when a name collision is found.
 
 **WebUI** (for remote/internal network access):
 ```bash
@@ -242,4 +245,3 @@ This project mainly relies on the following open-source projects (partial):
 ---
 
 *Created by [jianchang512](https://github.com/jianchang512)*
-
