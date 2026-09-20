@@ -11,7 +11,7 @@ INPUT_CANDIDATES = [
     Path("/kaggle/input/pyvideotrans-input/input.mp4"),
     Path("/kaggle/input/input.mp4"),
 ]
-REPO_URL = "https://github.com/jianchang512/pyvideotrans.git"
+REPO_URL = "https://github.com/canibeyours2001-ui/pyvideotrans.git"
 WORK_DIR = Path("/kaggle/working")
 REPO_DIR = WORK_DIR / "pyvideotrans-src"
 RUN_OUTPUT_DIR = WORK_DIR / "pyvideotrans-run"

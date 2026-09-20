@@ -143,12 +143,12 @@ jobs:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
         run: |
           set -euo pipefail
-          cp /home/runner/work/pyvideotrans/pyvideotrans/kaggle/worker.py "${KAGGLE_KERNEL_WORK_DIR}/worker.py"
+          cp "${GITHUB_WORKSPACE}/kaggle/worker.py" "${KAGGLE_KERNEL_WORK_DIR}/worker.py"
           python - <<'PY'
           import json
           import os
           from pathlib import Path
-          template = Path("/home/runner/work/pyvideotrans/pyvideotrans/kaggle/kernel-metadata.json")
+          template = Path(os.environ["GITHUB_WORKSPACE"]) / "kaggle" / "kernel-metadata.json"
           data = json.loads(template.read_text(encoding="utf-8"))
           data["id"] = f"{os.environ['KAGGLE_USERNAME']}/{os.environ['KERNEL_SLUG']}"
           data["dataset_sources"] = [f"{os.environ['KAGGLE_USERNAME']}/{os.environ['DATASET_SLUG']}"]
@@ -176,6 +176,17 @@ jobs:
             RAW_STATUS="$(kaggle kernels status "${KERNEL_REF}" 2>&1 || true)"
             echo "Kernel status output: ${RAW_STATUS}"
             STATUS="$(echo "${RAW_STATUS}" | awk -F': ' '/status:/ {print tolower($2)}' | tr -d '\r' | head -n1)"
+            if [[ -z "${STATUS}" ]]; then
+              case "$(echo "${RAW_STATUS}" | tr '[:upper:]' '[:lower:]')" in
+                *complete*) STATUS="complete" ;;
+                *running*) STATUS="running" ;;
+                *queued*) STATUS="queued" ;;
+                *error*) STATUS="error" ;;
+                *failed*) STATUS="failed" ;;
+                *cancel*) STATUS="cancelled" ;;
+                *) STATUS="unknown" ;;
+              esac
+            fi
             if [[ "${STATUS}" == "complete" ]]; then
               echo "Kaggle kernel completed successfully."
               break
