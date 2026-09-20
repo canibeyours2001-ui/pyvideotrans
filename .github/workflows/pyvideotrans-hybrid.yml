@@ -1,0 +1,281 @@
+name: pyVideoTrans Hybrid STT
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_model:
+        description: Faster-whisper model to run on Kaggle
+        required: false
+        default: large-v3
+      kaggle_accelerator:
+        description: Kaggle GPU accelerator identifier
+        required: false
+        default: NvidiaTeslaT4
+      monitor_timeout_minutes:
+        description: Maximum time to wait for the Kaggle kernel
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+
+jobs:
+  hybrid-stt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      INPUT_DIR: ${{ github.workspace }}/input
+      FINAL_DIR: ${{ github.workspace }}/final
+      DATASET_DIR: ${{ github.workspace }}/.kaggle-staging/dataset
+      KERNEL_DIR: ${{ github.workspace }}/.kaggle-staging/kernel
+      KAGGLE_OUTPUT_DIR: ${{ github.workspace }}/.kaggle-staging/output
+      INPUT_VIDEO_PATH: ${{ github.workspace }}/input/input.mp4
+      FINAL_VIDEO_PATH: ${{ github.workspace }}/final/final.mp4
+      WHISPER_MODEL: ${{ inputs.whisper_model }}
+      KAGGLE_ACCELERATOR: ${{ inputs.kaggle_accelerator }}
+      MONITOR_TIMEOUT_MINUTES: ${{ inputs.monitor_timeout_minutes }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+
+    steps:
+      - name: Checkout triggering revision
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          INPUT_VIDEO_URL: ${{ secrets.INPUT_VIDEO_URL }}
+        run: |
+          set -euo pipefail
+          [[ -n "${KAGGLE_USERNAME:-}" ]] || { echo "Missing required secret: KAGGLE_USERNAME"; exit 1; }
+          [[ -n "${KAGGLE_API_TOKEN:-}" ]] || { echo "Missing required secret: KAGGLE_API_TOKEN"; exit 1; }
+          [[ -n "${INPUT_VIDEO_URL:-}" ]] || { echo "Missing required secret: INPUT_VIDEO_URL"; exit 1; }
+
+      - name: Show runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CPU count: $(nproc)"
+          free -h
+          df -h
+
+      - name: Install CLI utilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg jq
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade kaggle
+          kaggle --version
+
+      - name: Authenticate Kaggle CLI
+        shell: bash
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          kaggle datasets list --page-size 1 >/dev/null
+
+      - name: Download and validate input video
+        shell: bash
+        env:
+          INPUT_VIDEO_URL: ${{ secrets.INPUT_VIDEO_URL }}
+        run: |
+          set -euo pipefail
+          rm -rf "${INPUT_DIR}" "${FINAL_DIR}" "${GITHUB_WORKSPACE}/.kaggle-staging"
+          mkdir -p "${INPUT_DIR}" "${FINAL_DIR}" "${DATASET_DIR}" "${KERNEL_DIR}" "${KAGGLE_OUTPUT_DIR}"
+          curl --fail --location --retry 3 --retry-delay 3 --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}"
+          [[ -s "${INPUT_VIDEO_PATH}" ]] || { echo "Downloaded input video is empty"; exit 1; }
+          ffprobe -v error -show_format -show_streams "${INPUT_VIDEO_PATH}" >/dev/null
+          cp "${INPUT_VIDEO_PATH}" "${DATASET_DIR}/input.mp4"
+
+      - name: Publish private Kaggle input dataset
+        shell: bash
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          set -euo pipefail
+          DATASET_REF="${KAGGLE_USERNAME}/pyvideotrans-input"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "id": f"{os.environ['KAGGLE_USERNAME']}/pyvideotrans-input",
+              "title": "pyVideoTrans private workflow input",
+              "subtitle": "Ephemeral private input for the hybrid STT workflow",
+              "description": "Created and versioned by GitHub Actions; keep this dataset private.",
+              "licenses": [{"name": "CC0-1.0"}],
+          }
+          Path(os.environ["DATASET_DIR"], "dataset-metadata.json").write_text(
+              json.dumps(metadata, indent=2), encoding="utf-8"
+          )
+          PY
+          if kaggle datasets status "${DATASET_REF}" >/dev/null 2>&1; then
+            kaggle datasets version --path "${DATASET_DIR}" --message "Update input for ${GITHUB_SHA}" --dir-mode zip --quiet
+          else
+            kaggle datasets create --path "${DATASET_DIR}" --quiet
+          fi
+          echo "DATASET_REF=${DATASET_REF}" >> "${GITHUB_ENV}"
+
+      - name: Wait for Kaggle dataset readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + MONITOR_TIMEOUT_MINUTES * 60 ))
+          while true; do
+            status_output="$(mktemp)"
+            if kaggle datasets status "${DATASET_REF}" >"${status_output}" 2>&1; then
+              status_text="$(python3 - "${status_output}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
+          matches = re.findall(r"(?:status|state)\s*:\s*([a-z_]+)", text)
+          print(matches[-1] if matches else "unknown")
+          PY
+              )"
+              rm -f "${status_output}"
+              if [[ "${status_text}" =~ ^(ready|complete|success|available)$ ]]; then
+                echo "Kaggle dataset is ready."
+                break
+              fi
+              if [[ "${status_text}" =~ ^(error|failed|invalid)$ ]]; then
+                echo "Kaggle dataset failed readiness check:"
+                echo "${status_text}"
+                exit 1
+              fi
+            else
+              cat "${status_output}"
+              rm -f "${status_output}"
+            fi
+            (( $(date +%s) < deadline )) || { echo "Timed out waiting for Kaggle dataset"; exit 1; }
+            sleep 20
+          done
+
+      - name: Prepare deterministic Kaggle kernel package
+        shell: bash
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          kernel_dir = Path(os.environ["KERNEL_DIR"])
+          worker = (root / "kaggle" / "worker.py").read_text(encoding="utf-8")
+          worker = worker.replace("__REPOSITORY_URL__", "https://github.com/canibeyours2001-ui/pyvideotrans.git")
+          worker = worker.replace("__REPOSITORY_REF__", os.environ["GITHUB_SHA"])
+          worker = worker.replace(
+              'WHISPER_MODEL = "__WHISPER_MODEL_JSON__"',
+              f"WHISPER_MODEL = {json.dumps(os.environ['WHISPER_MODEL'])}",
+          )
+          (kernel_dir / "worker.py").write_text(worker, encoding="utf-8")
+
+          metadata = json.loads((root / "kaggle" / "kernel-metadata.json").read_text(encoding="utf-8"))
+          metadata["id"] = f"{os.environ['KAGGLE_USERNAME']}/pyvideotrans-gpu-worker"
+          metadata["dataset_sources"] = [os.environ["DATASET_REF"]]
+          (kernel_dir / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+          PY
+
+      - name: Launch private Kaggle GPU kernel
+        shell: bash
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          set -euo pipefail
+          KERNEL_REF="${KAGGLE_USERNAME}/pyvideotrans-gpu-worker"
+          kaggle kernels push --path "${KERNEL_DIR}" --accelerator "${KAGGLE_ACCELERATOR}"
+          echo "KERNEL_REF=${KERNEL_REF}" >> "${GITHUB_ENV}"
+
+      - name: Poll Kaggle kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + MONITOR_TIMEOUT_MINUTES * 60 ))
+          while true; do
+            status_output="$(mktemp)"
+            kaggle kernels status "${KERNEL_REF}" >"${status_output}" 2>&1 || true
+            cat "${status_output}"
+            status_text="$(python3 - "${status_output}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
+          matches = re.findall(r"(?:status|state)\s*:\s*([a-z_]+)", text)
+          print(matches[-1] if matches else "unknown")
+          PY
+            )"
+            rm -f "${status_output}"
+            if [[ "${status_text}" =~ ^(complete|success|finished)$ ]]; then
+              break
+            fi
+            if [[ "${status_text}" =~ ^(error|failed|cancelled|canceled)$ ]]; then
+              echo "Kaggle kernel failed. Retrieve its output/logs with: kaggle kernels output ${KERNEL_REF}"
+              exit 1
+            fi
+            (( $(date +%s) < deadline )) || { echo "Timed out waiting for Kaggle kernel"; exit 1; }
+            sleep 30
+          done
+
+      - name: Download and validate stable Kaggle output
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle kernels output "${KERNEL_REF}" --path "${KAGGLE_OUTPUT_DIR}" --force
+          CONTRACT_SRT="${KAGGLE_OUTPUT_DIR}/gpu_output/subtitles.srt"
+          [[ -s "${CONTRACT_SRT}" ]] || {
+            echo "Missing required Kaggle output: ${CONTRACT_SRT}"
+            find "${KAGGLE_OUTPUT_DIR}" -maxdepth 5 -type f -print
+            exit 1
+          }
+          python3 - "${CONTRACT_SRT}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8-sig", errors="strict").strip()
+          if not text or "-->" not in text:
+              raise SystemExit("Subtitle validation failed: missing SRT timestamps")
+          if not re.search(r"(?m)^\s*\d+\s*$", text):
+              raise SystemExit("Subtitle validation failed: missing SRT cue index")
+          PY
+          cp "${CONTRACT_SRT}" "${FINAL_DIR}/subtitles.srt"
+
+      - name: Render final MP4 with CPU FFmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -y \
+            -i "${INPUT_VIDEO_PATH}" \
+            -vf "subtitles='${FINAL_DIR}/subtitles.srt':charenc=UTF-8" \
+            -c:v libx264 -preset medium -crf 20 -threads 4 \
+            -c:a aac -b:a 192k -movflags +faststart \
+            "${FINAL_VIDEO_PATH}"
+          [[ -s "${FINAL_VIDEO_PATH}" ]] || { echo "Final MP4 is empty"; exit 1; }
+          ffprobe -v error -show_format -show_streams "${FINAL_VIDEO_PATH}" >/dev/null
+
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyvideotrans-final-mp4
+          path: |
+            ${{ env.FINAL_VIDEO_PATH }}
+            ${{ env.FINAL_DIR }}/subtitles.srt
+          retention-days: 1
+
+      - name: Cleanup temporary credentials and media
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${GITHUB_WORKSPACE}/.kaggle-staging" "${INPUT_DIR}" "${FINAL_DIR}"
