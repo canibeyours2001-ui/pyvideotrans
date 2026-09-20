@@ -68,8 +68,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg jq
           python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade kaggle
+          python3 -m pip install --upgrade kaggle gdown
           kaggle --version
+          gdown --version
 
       - name: Authenticate Kaggle CLI
         shell: bash
@@ -87,9 +88,45 @@ jobs:
           set -euo pipefail
           rm -rf "${INPUT_DIR}" "${FINAL_DIR}" "${GITHUB_WORKSPACE}/.kaggle-staging"
           mkdir -p "${INPUT_DIR}" "${FINAL_DIR}" "${DATASET_DIR}" "${KERNEL_DIR}" "${KAGGLE_OUTPUT_DIR}"
-          curl --fail --location --retry 3 --retry-delay 3 --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}"
+          download_log="${RUNNER_TEMP}/input-video-download.log"
+          case "${INPUT_VIDEO_URL}" in
+            https://drive.google.com/*|http://drive.google.com/*|https://www.drive.google.com/*|http://www.drive.google.com/*)
+              if ! gdown --fuzzy --continue --retries 3 --quiet --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}" >"${download_log}" 2>&1; then
+                echo "Google Drive download failed. Verify the file is shared for direct download without login or CAPTCHA."
+                rm -f "${download_log}"
+                exit 1
+              fi
+              ;;
+            http://*|https://*)
+              if ! curl --fail --location --retry 3 --retry-delay 3 --output "${INPUT_VIDEO_PATH}" "${INPUT_VIDEO_URL}" >"${download_log}" 2>&1; then
+                echo "HTTP download failed. Verify INPUT_VIDEO_URL is reachable by GitHub Actions."
+                rm -f "${download_log}"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported INPUT_VIDEO_URL scheme; use an HTTP(S) or Google Drive URL."
+              exit 1
+              ;;
+          esac
+          rm -f "${download_log}"
           [[ -s "${INPUT_VIDEO_PATH}" ]] || { echo "Downloaded input video is empty"; exit 1; }
-          ffprobe -v error -show_format -show_streams "${INPUT_VIDEO_PATH}" >/dev/null
+          python3 - "${INPUT_VIDEO_PATH}" <<'PY'
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          prefix = path.read_bytes()[:8192].lstrip().lower()
+          html_markers = (b"<html", b"<!doctype html", b"<head", b"<body")
+          if any(prefix.startswith(marker) for marker in html_markers) or b"<html" in prefix:
+              raise SystemExit("Downloaded input appears to be HTML, not a video")
+          PY
+          input_size="$(stat -c '%s' "${INPUT_VIDEO_PATH}")"
+          echo "Downloaded input size: ${input_size} bytes"
+          if ! ffprobe -v error -show_format -show_streams "${INPUT_VIDEO_PATH}" >/dev/null; then
+            echo "ffprobe could not recognize the downloaded file as media."
+            exit 1
+          fi
           cp "${INPUT_VIDEO_PATH}" "${DATASET_DIR}/input.mp4"
 
       - name: Publish private Kaggle input dataset
