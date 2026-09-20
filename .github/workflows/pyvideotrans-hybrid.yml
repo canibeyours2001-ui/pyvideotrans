@@ -35,6 +35,7 @@ jobs:
       KAGGLE_OUTPUT_DIR: ${{ github.workspace }}/.kaggle-staging/output
       INPUT_VIDEO_PATH: ${{ github.workspace }}/input/input.mp4
       FINAL_VIDEO_PATH: ${{ github.workspace }}/final/final.mp4
+      RCLONE_CONFIG: ${{ github.workspace }}/.rclone/pyvideotrans.conf
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       KAGGLE_ACCELERATOR: ${{ inputs.kaggle_accelerator }}
       MONITOR_TIMEOUT_MINUTES: ${{ inputs.monitor_timeout_minutes }}
@@ -91,7 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          export RCLONE_CONFIG="${RUNNER_TEMP}/pyvideotrans.rclone.conf"
+          mkdir -p "$(dirname "${RCLONE_CONFIG}")"
           config_tmp="${RCLONE_CONFIG}.tmp"
           if ! printf '%s' "${RCLONE_MEGA_CONFIG}" | base64 --decode >"${config_tmp}"; then
             rm -f "${config_tmp}" "${RCLONE_CONFIG}"
@@ -101,10 +102,13 @@ jobs:
           chmod 600 "${config_tmp}"
           mv -f "${config_tmp}" "${RCLONE_CONFIG}"
           auth_log="${RUNNER_TEMP}/rclone-auth.log"
-          if ! rclone lsd "megadrive:" > /dev/null 2>"${auth_log}"; then
+          if rclone lsf --files-only "megadrive:pyvideotrans" > /dev/null 2>"${auth_log}"; then
+            :
+          else
+            status=$?
             rm -f "${auth_log}" "${RCLONE_CONFIG}"
-            echo "MEGA authentication failed. Verify the RCLONE_MEGA_CONFIG secret and megadrive remote."
-            exit 1
+            echo "MEGA authentication/input-folder check failed (rclone exit ${status}). Verify RCLONE_MEGA_CONFIG and megadrive:pyvideotrans access."
+            exit "${status}"
           fi
           rm -f "${auth_log}"
           echo "RCLONE_CONFIG=${RCLONE_CONFIG}" >> "${GITHUB_ENV}"
@@ -513,8 +517,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rclone_config="${RCLONE_CONFIG:-${GITHUB_WORKSPACE:-.}/.rclone/pyvideotrans.conf}"
           rm -rf "${GITHUB_WORKSPACE}/.kaggle-staging" "${INPUT_DIR}" "${FINAL_DIR}"
-          rm -f "${RCLONE_CONFIG}" "${RCLONE_CONFIG}.tmp" \
+          rm -f "${rclone_config}" "${rclone_config}.tmp" \
             "${RUNNER_TEMP}/rclone-auth.log" "${RUNNER_TEMP}/rclone-download.log" \
             "${RUNNER_TEMP}/rclone-upload.log" "${RUNNER_TEMP}/rclone-output-size.json" \
             "${RUNNER_TEMP}/rclone-output-list.txt" "${RUNNER_TEMP}/rclone-candidate-list.txt" \
