@@ -40,6 +40,15 @@ models
 dev
 chatterbox
 
+# Hybrid GitHub Actions/Kaggle staging and credentials
+.kaggle-staging/
+kaggle.json
+.env
+.env.*
+credentials/
+*token*
+*secret*
+
 
 .venv
 venv
