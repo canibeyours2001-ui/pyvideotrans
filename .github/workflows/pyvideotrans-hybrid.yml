@@ -35,7 +35,7 @@ jobs:
       KAGGLE_OUTPUT_DIR: ${{ github.workspace }}/.kaggle-staging/output
       INPUT_VIDEO_PATH: ${{ github.workspace }}/input/input.mp4
       FINAL_VIDEO_PATH: ${{ github.workspace }}/final/final.mp4
-      RCLONE_CONFIG: ${{ github.workspace }}/.rclone/pyvideotrans.conf
+      RCLONE_CONFIG_PATH: ${{ github.workspace }}/.rclone/pyvideotrans.conf
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       KAGGLE_ACCELERATOR: ${{ inputs.kaggle_accelerator }}
       MONITOR_TIMEOUT_MINUTES: ${{ inputs.monitor_timeout_minutes }}
@@ -71,7 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes ffmpeg jq rclone
+          sudo apt-get install --yes ffmpeg jq
+          curl --fail --silent --show-error --location https://rclone.org/install.sh | sudo bash
           python3 -m pip install --upgrade pip
           python3 -m pip install --upgrade kaggle
           kaggle --version
@@ -92,26 +93,70 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$(dirname "${RCLONE_CONFIG}")"
-          config_tmp="${RCLONE_CONFIG}.tmp"
-          if ! printf '%s' "${RCLONE_MEGA_CONFIG}" | base64 --decode >"${config_tmp}"; then
-            rm -f "${config_tmp}" "${RCLONE_CONFIG}"
+          mkdir -p "$(dirname "${RCLONE_CONFIG_PATH}")"
+          config_tmp="${RCLONE_CONFIG_PATH}.tmp"
+          auth_log="${RUNNER_TEMP}/rclone-auth.log"
+
+          print_redacted_rclone_error() {
+            python3 - "${auth_log}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          sensitive = re.compile(
+              r"(?i)(\b(?:session[_-]?id|master[_-]?key|password|pass|token|"
+              r"access[_-]?token|refresh[_-]?token|client[_-]?secret|secret)\b\s*[=:]\s*)"
+              r"(?:\"[^\"]*\"|'[^']*'|\S+)"
+          )
+          redacted = sensitive.sub(r"\1<redacted>", text)
+          print(redacted.rstrip() or "<no rclone stderr captured>")
+          PY
+          }
+
+          if ! printf '%s' "${RCLONE_MEGA_CONFIG}" | tr -d '[:space:]' | base64 --decode >"${config_tmp}"; then
+            rm -f "${config_tmp}" "${RCLONE_CONFIG_PATH}" "${auth_log}"
             echo "RCLONE_MEGA_CONFIG is not valid Base64."
             exit 1
           fi
+          if [[ ! -s "${config_tmp}" ]]; then
+            rm -f "${config_tmp}" "${RCLONE_CONFIG_PATH}" "${auth_log}"
+            echo "Decoded RCLONE_MEGA_CONFIG is empty."
+            exit 1
+          fi
           chmod 600 "${config_tmp}"
-          mv -f "${config_tmp}" "${RCLONE_CONFIG}"
-          auth_log="${RUNNER_TEMP}/rclone-auth.log"
-          if rclone lsf --files-only "megadrive:pyvideotrans" > /dev/null 2>"${auth_log}"; then
+          mv -f "${config_tmp}" "${RCLONE_CONFIG_PATH}"
+          config_size="$(stat -c '%s' "${RCLONE_CONFIG_PATH}")"
+          config_mode="$(stat -c '%a' "${RCLONE_CONFIG_PATH}")"
+          if [[ "${config_size}" -le 0 || "${config_mode}" != "600" ]]; then
+            rm -f "${RCLONE_CONFIG_PATH}" "${config_tmp}" "${auth_log}"
+            echo "Decoded rclone config failed file safety checks."
+            exit 1
+          fi
+          remote_names="${RUNNER_TEMP}/rclone-remotes.txt"
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" listremotes >"${remote_names}" 2>"${auth_log}"; then
+            echo "rclone could not parse the decoded config (config_bytes=${config_size}, mode=${config_mode})."
+            print_redacted_rclone_error
+            rm -f "${remote_names}" "${auth_log}" "${RCLONE_CONFIG_PATH}" "${config_tmp}"
+            exit 1
+          fi
+          if ! grep -Fxq "megadrive:" "${remote_names}"; then
+            echo "Decoded rclone config does not define the required megadrive remote."
+            print_redacted_rclone_error
+            rm -f "${remote_names}" "${auth_log}" "${RCLONE_CONFIG_PATH}" "${config_tmp}"
+            exit 1
+          fi
+          if rclone --config "${RCLONE_CONFIG_PATH}" lsf --files-only "megadrive:pyvideotrans" > /dev/null 2>"${auth_log}"; then
             :
           else
             status=$?
-            rm -f "${auth_log}" "${RCLONE_CONFIG}"
-            echo "MEGA authentication/input-folder check failed (rclone exit ${status}). Verify RCLONE_MEGA_CONFIG and megadrive:pyvideotrans access."
+            echo "MEGA input-folder check failed (rclone exit ${status}; config_bytes=${config_size}, mode=${config_mode})."
+            print_redacted_rclone_error
+            rm -f "${remote_names}" "${auth_log}" "${RCLONE_CONFIG_PATH}" "${config_tmp}"
             exit "${status}"
           fi
-          rm -f "${auth_log}"
-          echo "RCLONE_CONFIG=${RCLONE_CONFIG}" >> "${GITHUB_ENV}"
+          rm -f "${remote_names}" "${auth_log}"
+          echo "MEGA authentication verified: remote=megadrive, input=megadrive:pyvideotrans, config_bytes=${config_size}, mode=${config_mode}"
 
       - name: Discover MEGA input
         shell: bash
@@ -120,7 +165,9 @@ jobs:
           rm -rf "${INPUT_DIR}" "${FINAL_DIR}" "${GITHUB_WORKSPACE}/.kaggle-staging"
           mkdir -p "${INPUT_DIR}" "${FINAL_DIR}" "${DATASET_DIR}" "${KERNEL_DIR}" "${KAGGLE_OUTPUT_DIR}"
           listing="${RUNNER_TEMP}/mega-input.json"
-          if ! rclone lsjson --files-only "megadrive:pyvideotrans" >"${listing}" 2>/dev/null; then
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" lsjson --files-only \
+            --exclude '.DS_Store' --exclude '._.DS_Store' \
+            "megadrive:pyvideotrans" >"${listing}" 2>/dev/null; then
             rm -f "${listing}"
             echo "Unable to list MEGA input folder megadrive:pyvideotrans."
             exit 1
@@ -178,7 +225,7 @@ jobs:
           candidate_listing="${RUNNER_TEMP}/rclone-candidate-list.txt"
           remote_file_exists() {
             local remote_path="$1"
-            if rclone lsf --files-only --format p "${remote_path}" >"${candidate_listing}" 2>/dev/null; then
+            if rclone --config "${RCLONE_CONFIG_PATH}" lsf --files-only --format p "${remote_path}" >"${candidate_listing}" 2>/dev/null; then
               return 0
             else
               local status=$?
@@ -209,7 +256,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! rclone copyto "megadrive:pyvideotrans/${MEGA_SOURCE_NAME}" "${INPUT_VIDEO_PATH}" --no-traverse >"${RUNNER_TEMP}/rclone-download.log" 2>&1; then
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" copyto "megadrive:pyvideotrans/${MEGA_SOURCE_NAME}" "${INPUT_VIDEO_PATH}" --no-traverse >"${RUNNER_TEMP}/rclone-download.log" 2>&1; then
             rm -f "${RUNNER_TEMP}/rclone-download.log"
             echo "Failed to download ${MEGA_SOURCE_NAME} from MEGA."
             exit 1
@@ -446,7 +493,7 @@ jobs:
         run: |
           set -euo pipefail
           collision_listing="${RUNNER_TEMP}/rclone-collision-list.txt"
-          if rclone lsf --files-only --format p "megadrive:video-out/${MEGA_OUTPUT_NAME}" >"${collision_listing}" 2>/dev/null; then
+          if rclone --config "${RCLONE_CONFIG_PATH}" lsf --files-only --format p "megadrive:video-out/${MEGA_OUTPUT_NAME}" >"${collision_listing}" 2>/dev/null; then
             echo "Refusing to overwrite existing MEGA output: ${MEGA_OUTPUT_NAME}"
             rm -f "${collision_listing}"
             exit 1
@@ -459,7 +506,7 @@ jobs:
             exit "${status}"
           fi
           rm -f "${collision_listing}"
-          if ! rclone copyto "${FINAL_VIDEO_PATH}" "megadrive:video-out/${MEGA_OUTPUT_NAME}" --immutable --no-traverse >"${RUNNER_TEMP}/rclone-upload.log" 2>&1; then
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" copyto "${FINAL_VIDEO_PATH}" "megadrive:video-out/${MEGA_OUTPUT_NAME}" --immutable --no-traverse >"${RUNNER_TEMP}/rclone-upload.log" 2>&1; then
             rm -f "${RUNNER_TEMP}/rclone-upload.log"
             echo "Failed to upload ${MEGA_OUTPUT_NAME} to MEGA."
             exit 1
@@ -473,7 +520,7 @@ jobs:
           remote_path="megadrive:video-out/${MEGA_OUTPUT_NAME}"
           size_json="${RUNNER_TEMP}/rclone-output-size.json"
           listing="${RUNNER_TEMP}/rclone-output-list.txt"
-          if ! rclone size --json "${remote_path}" >"${size_json}" 2>/dev/null; then
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" size --json "${remote_path}" >"${size_json}" 2>/dev/null; then
             rm -f "${size_json}"
             echo "Unable to verify MEGA output ${MEGA_OUTPUT_NAME}."
             exit 1
@@ -492,7 +539,7 @@ jobs:
             echo "MEGA output size mismatch for ${MEGA_OUTPUT_NAME}: local=${local_size}, remote=${remote_size}."
             exit 1
           fi
-          if ! rclone lsf --files-only --format p "${remote_path}" >"${listing}" 2>/dev/null; then
+          if ! rclone --config "${RCLONE_CONFIG_PATH}" lsf --files-only --format p "${remote_path}" >"${listing}" 2>/dev/null; then
             rm -f "${size_json}" "${listing}"
             echo "Unable to locate MEGA output ${MEGA_OUTPUT_NAME}."
             exit 1
@@ -517,7 +564,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rclone_config="${RCLONE_CONFIG:-${GITHUB_WORKSPACE:-.}/.rclone/pyvideotrans.conf}"
+          rclone_config="${RCLONE_CONFIG_PATH:-${GITHUB_WORKSPACE:-.}/.rclone/pyvideotrans.conf}"
           rm -rf "${GITHUB_WORKSPACE}/.kaggle-staging" "${INPUT_DIR}" "${FINAL_DIR}"
           rm -f "${rclone_config}" "${rclone_config}.tmp" \
             "${RUNNER_TEMP}/rclone-auth.log" "${RUNNER_TEMP}/rclone-download.log" \
