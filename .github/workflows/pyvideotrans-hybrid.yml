@@ -314,54 +314,77 @@ jobs:
               json.dumps(metadata, indent=2), encoding="utf-8"
           )
           PY
-          if kaggle datasets status "${DATASET_REF}" >/dev/null 2>&1; then
+          dataset_probe="$(mktemp)"
+          if kaggle datasets files --page-size 1 "${DATASET_REF}" >"${dataset_probe}" 2>&1; then
+            rm -f "${dataset_probe}"
             kaggle datasets version --path "${DATASET_DIR}" --message "Update input for ${GITHUB_SHA}" --dir-mode zip --quiet
           else
+            if grep -Eiq '(^|[^0-9])403([^0-9]|$)|forbidden|unauthorized|permission' "${dataset_probe}"; then
+              echo "Kaggle denied access to existing private dataset ${DATASET_REF}; refusing to create or retry."
+              python3 - "${dataset_probe}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          sensitive = re.compile(
+              r"(?i)(\b(?:token|password|secret|authorization|api[_-]?key)\b\s*[=:]\s*)"
+              r"(?:\"[^\"]*\"|'[^']*'|\S+)"
+          )
+          print(sensitive.sub(r"\1<redacted>", text).rstrip())
+          PY
+              rm -f "${dataset_probe}"
+              exit 1
+            fi
+            rm -f "${dataset_probe}"
             kaggle datasets create --path "${DATASET_DIR}" --quiet
           fi
           echo "DATASET_REF=${DATASET_REF}" >> "${GITHUB_ENV}"
 
-      - name: Wait for Kaggle dataset readiness
+      - name: Verify Kaggle dataset accessibility
         shell: bash
         run: |
           set -euo pipefail
           deadline=$(( $(date +%s) + MONITOR_TIMEOUT_MINUTES * 60 ))
           while true; do
-            status_output="$(mktemp)"
-            if kaggle datasets status "${DATASET_REF}" >"${status_output}" 2>&1; then
-              status_text="$(python3 - "${status_output}" <<'PY'
+            files_output="$(mktemp)"
+            if kaggle datasets files --csv --page-size 200 "${DATASET_REF}" >"${files_output}" 2>&1; then
+              if python3 - "${files_output}" <<'PY'
+          import csv
+          import sys
+          from pathlib import Path
+
+          with Path(sys.argv[1]).open(newline="", encoding="utf-8", errors="replace") as stream:
+              rows = csv.DictReader(stream)
+              raise SystemExit(0 if any(row.get("name") == "input.mp4" for row in rows) else 1)
+          PY
+              then
+                rm -f "${files_output}"
+                echo "Kaggle dataset is accessible and contains input.mp4."
+                break
+              fi
+              rm -f "${files_output}"
+            else
+              if grep -Eiq '(^|[^0-9])403([^0-9]|$)|(^|[^0-9])401([^0-9]|$)|forbidden|unauthorized|permission' "${files_output}"; then
+                echo "Kaggle permanently denied access to ${DATASET_REF}; refusing to retry."
+                python3 - "${files_output}" <<'PY'
           import re
           import sys
           from pathlib import Path
 
-          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
-          matches = re.findall(r"(?:status|state)\s*:\s*([a-z_]+)", text)
-          if matches:
-              print(matches[-1])
-          else:
-              for state in ("complete", "running", "queued", "error", "failed", "cancelled", "canceled"):
-                  if state in text:
-                      print(state)
-                      break
-              else:
-                  print("unknown")
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          sensitive = re.compile(
+              r"(?i)(\b(?:token|password|secret|authorization|api[_-]?key)\b\s*[=:]\s*)"
+              r"(?:\"[^\"]*\"|'[^']*'|\S+)"
+          )
+          print(sensitive.sub(r"\1<redacted>", text).rstrip())
           PY
-              )"
-              rm -f "${status_output}"
-              if [[ "${status_text}" =~ ^(ready|complete|success|available)$ ]]; then
-                echo "Kaggle dataset is ready."
-                break
-              fi
-              if [[ "${status_text}" =~ ^(error|failed|invalid)$ ]]; then
-                echo "Kaggle dataset failed readiness check:"
-                echo "${status_text}"
+                rm -f "${files_output}"
                 exit 1
               fi
-            else
-              cat "${status_output}"
-              rm -f "${status_output}"
+              rm -f "${files_output}"
             fi
-            (( $(date +%s) < deadline )) || { echo "Timed out waiting for Kaggle dataset"; exit 1; }
+            (( $(date +%s) < deadline )) || { echo "Timed out waiting for Kaggle dataset files"; exit 1; }
             sleep 20
           done
 
