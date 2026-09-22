@@ -1,0 +1,1 @@
+"""VideoTrans Studio processing service."""
