@@ -1,0 +1,2 @@
+import {identity,config,backendFetch,failure} from '@/lib/server';
+export async function GET(request:Request){try{const owner=identity(request),c=await config(owner);if(!c)return Response.json({ready:false,connected:false});const r=await backendFetch(c,owner,'/health');if(!r.ok)return Response.json({ready:false,connected:false,error:'Backend credentials or deployment need attention.'});return Response.json({...(await r.json() as Record<string,unknown>),connected:true},{headers:{'Cache-Control':'no-store'}})}catch(e){return failure(e)}}
