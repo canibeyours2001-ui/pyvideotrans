@@ -94,7 +94,8 @@ LOCAL_BUILTIN = [
     PIPER_TTS,
     CHATTERBOX_TTS,
     Supertonic_TTS,
-    VITSCNEN_TTS
+    VITSCNEN_TTS,
+    VOXCPM_TTS
 ]
 
 # 配音角色根据语言不同而变化的渠道
@@ -124,7 +125,7 @@ ID_NAME_DICT = {
                                    win="gptsovits"),
     COSYVOICE_TTS: ChannelProvider(f"CosyVoice({tr('Local')}API)", imp="._cosyvoice", key_name="cosyvoice_url",
                                    win="cosyvoice"),
-    VOXCPM_TTS: ChannelProvider(f"VoxCPM({tr('Local')}API)", imp="._voxcpm", key_name="voxcpmtts_url", win="gradiowin"),
+    VOXCPM_TTS: ChannelProvider("VoxCPM2 (Built-in)", imp="._voxcpm2"),
     FIRERED3_TTS: ChannelProvider(f"FireRed3({tr('Local')}API)", imp="._firered3tts", key_name="firered3tts_url",
                                   win="gradiowin"),
 

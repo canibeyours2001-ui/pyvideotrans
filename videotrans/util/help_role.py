@@ -368,6 +368,10 @@ def role_menu(tts_type, langcode=None) -> List:
     if tts_type == tts.QWEN3LOCAL_TTS:
         return list(get_qwenttslocal_rolelist().keys())
 
+    if tts_type == tts.VOXCPM_TTS:
+        from videotrans.tts.voxcpm2_profiles import profile_names
+        return profile_names()
+
     if tts_type==tts.OMNIVOICE_TTS:
         return list(get_f5tts_role().keys())+['default']
 

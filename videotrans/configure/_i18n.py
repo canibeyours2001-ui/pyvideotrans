@@ -4,7 +4,16 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QLocale
+try:
+    from PySide6.QtCore import QLocale
+except ModuleNotFoundError:
+    class QLocale:
+        @staticmethod
+        def system():
+            return QLocale()
+
+        def name(self):
+            return "en_US"
 
 from videotrans.configure._paths import ROOT_DIR
 

@@ -60,6 +60,18 @@ source
 build
 pretrained_models
 runtime
+storage/
+*.part
+cookies.txt
+*.cookies.txt
+*.netscape-cookies.txt
+hf_cache/
+.huggingface/
+*.wav
+*.m4a
+*.mkv
+*.webm
+*.mov
 
 __pycache__
 .idea

@@ -1,7 +1,10 @@
-from typing import Union, Type
+from typing import TYPE_CHECKING, Union, Type
+
 from videotrans.configure.config import tr, params, app_cfg
-from videotrans.tts._base import BaseTTS
 from videotrans import get_class
+
+if TYPE_CHECKING:
+    from videotrans.tts._base import BaseTTS
 from ._constants import *
 
 
@@ -116,4 +119,4 @@ def run(*, queue_tts=None, language="", uuid=None, play=False, tts_type=0, is_cu
         from videotrans.configure.excepts import DubbingSrtError
         raise DubbingSrtError(f'No this TTS Channel:{tts_type=}')
 
-    return _cls(**kwargs).run()  # type:ignore
+    return _cls(**kwargs).run()

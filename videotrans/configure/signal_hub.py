@@ -1,5 +1,30 @@
 from typing import Union
-from PySide6.QtCore import QObject, Signal, Slot
+
+try:
+    from PySide6.QtCore import QObject, Signal, Slot
+except ModuleNotFoundError:
+    class QObject:
+        def __init__(self, parent=None):
+            self.parent = parent
+
+    class _Signal:
+        def __init__(self, *args, **kwargs):
+            self._subscribers = []
+
+        def connect(self, callback):
+            self._subscribers.append(callback)
+
+        def emit(self, *args, **kwargs):
+            for callback in self._subscribers:
+                callback(*args, **kwargs)
+
+    def Signal(*args, **kwargs):
+        return _Signal(*args, **kwargs)
+
+    def Slot(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
 
 from videotrans.task.taskcfg import SignMsg
 

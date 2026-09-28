@@ -12,8 +12,9 @@ Requires: uv sync --extra webui
 import os
 import sys
 import json
-import time
 import asyncio
+import time
+import tempfile
 import traceback
 from pathlib import Path
 from typing import List
@@ -24,7 +25,7 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 # 语言常量
 # ---------------------------------------------------------------------------
-CLI_LANG = "zh"
+CLI_LANG = "en"
 os.environ['PYVIDEOTRANS_LANG'] = CLI_LANG
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,9 @@ from videotrans import recognition, translator, tts
 from videotrans.util import tools
 from videotrans.util.gpus import getset_gpu
 from videotrans.util.help_role import role_menu
+from videotrans.remote_importer import LABEL_TO_PROVIDER, RemoteImportError, RemoteMediaImporter
+from videotrans.tts.voxcpm2_profiles import get_profile, profile_names
+from videotrans.tts.voxcpm2_voice import VoxCPM2VoiceStore
 
 # ---------------------------------------------------------------------------
 # params / settings 持久化路径
@@ -109,10 +113,12 @@ LANG_DISPLAY_NAMES = list(LANGNAME_DICT.values())
 DEFAULT_SOURCE_LANG = LANG_DISPLAY_NAMES[0]
 DEFAULT_TARGET_LANG = '-'
 
-SUBTITLE_TYPES = {"不嵌入字幕": 0, "嵌入硬字幕": 1, "嵌入软字幕": 2, "嵌入硬字幕(双语)": 3, "嵌入软字幕(双语)": 4}
-DEFAULT_SUBTITLE_TYPE = "嵌入硬字幕"
-PUNC_OPTIONS = {"默认标点": 0, "恢复标点": 1, "删除标点": 2}
-LOOP_BGM_OPTIONS = {"背景音截断": 0, "背景音循环": 1}
+SUBTITLE_TYPES = {"No subtitles": 0, "Hard subtitles": 1, "Soft subtitles": 2, "Hard bilingual subtitles": 3, "Soft bilingual subtitles": 4}
+DEFAULT_SUBTITLE_TYPE = "Hard subtitles"
+PUNC_OPTIONS = {"Default punctuation": 0, "Restore punctuation": 1, "Remove punctuation": 2}
+LOOP_BGM_OPTIONS = {"Trim background audio": 0, "Loop background audio": 1}
+MEDIA_SOURCE_CHOICES = list(LABEL_TO_PROVIDER.keys())
+DEFAULT_TEST_SCRIPT = "မင်္ဂလာပါ။ ဒီအသံကို စမ်းသပ်နေပါတယ်။"
 
 # ---------------------------------------------------------------------------
 # ASS 字幕样式
@@ -206,11 +212,54 @@ def _format_pitch(v):
 
 
 def _safe_get(key, default=""):
-    """从 _user_params 读取值，支持 str/int/float/bool"""
+    """Read a params value with a safe default."""
     v = _user_params.get(key, default)
     if v is None:
         return default
     return v
+
+
+def _voxcpm2_voice_store() -> VoxCPM2VoiceStore:
+    return VoxCPM2VoiceStore()
+
+
+def import_media_for_webui(media_source: str, url: str, cookies_file: str | None = None):
+    provider = LABEL_TO_PROVIDER.get(media_source, media_source)
+    if provider == "local":
+        return None, "Ready: choose a local file with the video picker."
+    if not url.strip():
+        return None, "Please enter a URL."
+    try:
+        cookie_path = cookies_file.strip() if cookies_file and cookies_file.strip() else None
+        result = RemoteMediaImporter(cookies_file=cookie_path).import_media(provider, url.strip())
+    except RemoteImportError as exc:
+        return None, f"Import failed: {exc}"
+    return str(result.local_path), f"Ready: {result.title or result.local_path.name}"
+
+
+def test_voxcpm2_voice_for_webui(profile_display: str, test_script: str):
+    from videotrans.tts.voxcpm2_engine import generate_voxcpm2_audition
+
+    profile = get_profile(profile_display)
+    script = test_script.strip() or DEFAULT_TEST_SCRIPT
+    tmp_wav = Path(tempfile.mkdtemp(prefix="voxcpm2-audition-")) / "audition.wav"
+    generated = generate_voxcpm2_audition(profile, script, tmp_wav)
+    audition = _voxcpm2_voice_store().save_audition(profile.profile_id, generated, script)
+    return f"Generated new candidate for {profile.display_name}", str(audition.wav_path)
+
+
+def use_voxcpm2_voice_for_webui(profile_display: str):
+    profile = get_profile(profile_display)
+    selected = _voxcpm2_voice_store().select_latest_audition(profile.profile_id)
+    return f"✅ Voice selected for dubbing: {profile.display_name}", str(selected.wav_path)
+
+
+def selected_voxcpm2_voice_status(profile_display: str):
+    profile = get_profile(profile_display)
+    selected = _voxcpm2_voice_store().get_selected_voice(profile.profile_id)
+    if selected is None:
+        return "No selected voice yet.", None
+    return "✅ Voice selected for dubbing", str(selected.wav_path)
 
 
 # ---------------------------------------------------------------------------
@@ -926,34 +975,40 @@ def build_ui():
 
     with gr.Blocks(title="pyVideoTrans WebUI") as app:
         gr.Markdown("""
-# pyVideoTrans 视频翻译 WebUI
-> [该界面仅实现部分功能，完整功能请使用桌面软件版(sp.exe 或 sp.py)](https://pyvideotrans.com)
+# pyVideoTrans WebUI
+> Server-side media import, subtitles, translation, dubbing, and built-in VoxCPM2 voice studio.
 >
->  [使用文档](https://pyvideotrans.com) |
->  [开源地址](https://github.com/jianchang512/pyvideotrans) |
->  [遇到问题](https://bbs.pyvideotrans.com)
+>  [Documentation](https://pyvideotrans.com) |
+>  [Source](https://github.com/jianchang512/pyvideotrans) |
+>  [Support](https://bbs.pyvideotrans.com)
 ----
         """)
 
         with gr.Tabs():
-            # === Tab 1: 视频翻译 ===
-            with gr.Tab("🎬 视频翻译", id="translate"):
+            # === Tab 1: Video Translation ===
+            with gr.Tab("🎬 Video Translation", id="translate"):
                 prev_recogn = gr.State(value=RECOGN_NAMES[DEFAULT_RECOGN])
                 prev_translate = gr.State(value=TRANSLATE_NAMES[DEFAULT_TRANSLATE])
                 prev_tts = gr.State(value=TTS_NAMES[DEFAULT_TTS])
 
                 with gr.Row():
                     with gr.Column(scale=3):
-                        input_file = gr.Video(label="选择视频文件", interactive=True)
+                        input_file = gr.Video(label="Media Input", interactive=True)
+                        with gr.Accordion("Remote Media Import", open=True):
+                            media_source = gr.Dropdown(choices=MEDIA_SOURCE_CHOICES, value="Local File", label="Media Source", interactive=True)
+                            remote_url = gr.Textbox(label="URL", placeholder="https://...", interactive=True)
+                            cookies_file = gr.Textbox(label="Optional cookies.txt path", placeholder="/secure/path/cookies.txt", interactive=True)
+                            import_btn = gr.Button("Import Media")
+                            import_status = gr.Textbox(label="Import Status", value="Ready", interactive=False)
 
-                        recogn_choice = gr.Dropdown(choices=RECOGN_NAMES, value=RECOGN_NAMES[int(_user_params.get('recogn_type', DEFAULT_RECOGN)) if str(_user_params.get('recogn_type', '')).isdigit() else DEFAULT_RECOGN], label="识别渠道", interactive=True)
-                        model_choice = gr.Dropdown(choices=FASTER_MODEL_NAMES, value=_user_params.get('model_name', DEFAULT_MODEL), label="模型", interactive=True)
+                        recogn_choice = gr.Dropdown(choices=RECOGN_NAMES, value=RECOGN_NAMES[int(_user_params.get('recogn_type', DEFAULT_RECOGN)) if str(_user_params.get('recogn_type', '')).isdigit() else DEFAULT_RECOGN], label="ASR Provider", interactive=True)
+                        model_choice = gr.Dropdown(choices=FASTER_MODEL_NAMES, value=_user_params.get('model_name', DEFAULT_MODEL), label="Model", interactive=True)
 
-                        translate_choice = gr.Dropdown(choices=TRANSLATE_NAMES, value=TRANSLATE_NAMES[int(_user_params.get('translate_type', DEFAULT_TRANSLATE)) if str(_user_params.get('translate_type', '')).isdigit() else DEFAULT_TRANSLATE], label="翻译渠道", interactive=True)
-                        source_lang = gr.Dropdown(choices=LANG_DISPLAY_NAMES, value=_user_params.get('source_language', DEFAULT_SOURCE_LANG), label="发音语言（源语言）", interactive=True)
-                        target_lang = gr.Dropdown(choices=['-']+LANG_DISPLAY_NAMES, value=_user_params.get('target_language', DEFAULT_TARGET_LANG), label="目标语言", interactive=True)
+                        translate_choice = gr.Dropdown(choices=TRANSLATE_NAMES, value=TRANSLATE_NAMES[int(_user_params.get('translate_type', DEFAULT_TRANSLATE)) if str(_user_params.get('translate_type', '')).isdigit() else DEFAULT_TRANSLATE], label="Translation Provider", interactive=True)
+                        source_lang = gr.Dropdown(choices=LANG_DISPLAY_NAMES, value=_user_params.get('source_language', DEFAULT_SOURCE_LANG), label="Source Language", interactive=True)
+                        target_lang = gr.Dropdown(choices=['-']+LANG_DISPLAY_NAMES, value=_user_params.get('target_language', DEFAULT_TARGET_LANG), label="Target Language", interactive=True)
 
-                        tts_choice = gr.Dropdown(choices=TTS_NAMES, value=TTS_NAMES[int(_user_params.get('tts_type', DEFAULT_TTS)) if str(_user_params.get('tts_type', '')).isdigit() else DEFAULT_TTS], label="配音渠道", interactive=True)
+                        tts_choice = gr.Dropdown(choices=TTS_NAMES, value=TTS_NAMES[int(_user_params.get('tts_type', DEFAULT_TTS)) if str(_user_params.get('tts_type', '')).isdigit() else DEFAULT_TTS], label="TTS Provider", interactive=True)
                                                 # 根据已加载的TTS渠道和目标语言预填充角色列表
                         _init_tts_idx = int(_user_params.get('tts_type', DEFAULT_TTS)) if str(_user_params.get('tts_type', '')).isdigit() else DEFAULT_TTS
                         _init_target = _user_params.get('target_language', DEFAULT_TARGET_LANG)
@@ -966,46 +1021,66 @@ def build_ui():
                             _init_roles = ["No"]
                         _saved_role = _user_params.get('voice_role', 'No')
                         _init_role_val = _saved_role if _saved_role in _init_roles else _init_roles[0]
-                        voice_role = gr.Dropdown(choices=_init_roles, value=_init_role_val, label="配音角色", interactive=True)
+                        voice_role = gr.Dropdown(choices=_init_roles, value=_init_role_val, label="Voice Profile", interactive=True)
+
+                        with gr.Accordion("VoxCPM2 Voice Studio", open=False):
+                            voxcpm2_profile = gr.Dropdown(choices=profile_names(), value=profile_names()[-1], label="Profile", interactive=True)
+                            voxcpm2_script = gr.Textbox(label="Test Script", value=DEFAULT_TEST_SCRIPT, lines=3, interactive=True)
+                            with gr.Row():
+                                voxcpm2_test_btn = gr.Button("Test Voice")
+                                voxcpm2_test_again_btn = gr.Button("Test Voice Again")
+                                voxcpm2_use_btn = gr.Button("Use This Voice for Dubbing", variant="primary")
+                            voxcpm2_status = gr.Textbox(label="Voice Status", value="No selected voice yet.", interactive=False)
+                            voxcpm2_audio = gr.Audio(label="Latest / Selected Voice", interactive=False)
+                            voxcpm2_play_selected_btn = gr.Button("Play Selected Voice")
+                            voxcpm2_replace_btn = gr.Button("Replace Voice")
 
                         with gr.Row():
-                            voice_autorate = gr.Checkbox(label="配音加速", value=True)
-                            video_autorate = gr.Checkbox(label="视频慢速", value=False)
+                            voice_autorate = gr.Checkbox(label="Speed up voice", value=True)
+                            video_autorate = gr.Checkbox(label="Slow down video", value=False)
                         with gr.Row():
-                            voice_rate = gr.Slider(minimum=-50, maximum=50, value=int(str(_user_params.get("voice_rate", "0")).replace("%","")), step=1, label="配音语速 (%)")
-                            volume_rate = gr.Slider(minimum=-95, maximum=100, value=int(str(_user_params.get("volume", "0")).replace("%","")), step=1, label="音量调整 (%)")
-                            pitch_rate = gr.Slider(minimum=-100, maximum=100, value=int(str(_user_params.get("pitch", "0")).replace("Hz","")), step=1, label="音调 (Hz)")
-                        subtitle_type = gr.Dropdown(choices=list(SUBTITLE_TYPES.keys()), value=list(SUBTITLE_TYPES.keys())[int(_user_params.get('subtitle_type', 1)) if str(_user_params.get('subtitle_type', '')).isdigit() and int(_user_params.get('subtitle_type', 1)) < len(SUBTITLE_TYPES) else 1], label="字幕嵌入类型", interactive=True)
+                            voice_rate = gr.Slider(minimum=-50, maximum=50, value=int(str(_user_params.get("voice_rate", "0")).replace("%","")), step=1, label="Voice speed (%)")
+                            volume_rate = gr.Slider(minimum=-95, maximum=100, value=int(str(_user_params.get("volume", "0")).replace("%","")), step=1, label="Volume adjustment (%)")
+                            pitch_rate = gr.Slider(minimum=-100, maximum=100, value=int(str(_user_params.get("pitch", "0")).replace("Hz","")), step=1, label="Pitch (Hz)")
+                        subtitle_type = gr.Dropdown(choices=list(SUBTITLE_TYPES.keys()), value=list(SUBTITLE_TYPES.keys())[int(_user_params.get('subtitle_type', 1)) if str(_user_params.get('subtitle_type', '')).isdigit() and int(_user_params.get('subtitle_type', 1)) < len(SUBTITLE_TYPES) else 1], label="Subtitle Mode", interactive=True)
                         build_ass_editor()
 
-                        with gr.Accordion("📋 更多设置", open=False):
+                        with gr.Accordion("More Settings", open=False):
                             with gr.Row():
-                                remove_noise = gr.Checkbox(label="降噪", value=False)
-                                fix_punc = gr.Dropdown(choices=list(PUNC_OPTIONS.keys()), value="默认标点", label="标点处理", interactive=True)
+                                remove_noise = gr.Checkbox(label="Noise reduction", value=False)
+                                fix_punc = gr.Dropdown(choices=list(PUNC_OPTIONS.keys()), value="Default punctuation", label="Punctuation", interactive=True)
                             with gr.Row():
-                                is_separate = gr.Checkbox(label="分离人声背景声", value=False)
-                                embed_bgm = gr.Checkbox(label="重新嵌入背景声", value=True)
+                                is_separate = gr.Checkbox(label="Separate vocal/background audio", value=False)
+                                embed_bgm = gr.Checkbox(label="Re-embed background audio", value=True)
                             with gr.Row():
-                                loop_bgm = gr.Dropdown(choices=list(LOOP_BGM_OPTIONS.keys()), value="背景音截断", label="背景音处理", interactive=True)
-                                backaudio_volume = gr.Slider(minimum=0.0, maximum=2.0, value=float(_user_params.get("backaudio_volume", settings.get("backaudio_volume", 0.8))), step=0.1, label="背景音量")
+                                loop_bgm = gr.Dropdown(choices=list(LOOP_BGM_OPTIONS.keys()), value="Trim background audio", label="Background audio handling", interactive=True)
+                                backaudio_volume = gr.Slider(minimum=0.0, maximum=2.0, value=float(_user_params.get("backaudio_volume", settings.get("backaudio_volume", 0.8))), step=0.1, label="Background volume")
 
-                        cuda_accel = gr.Checkbox(label="启用 CUDA 加速", value=False)
+                        cuda_accel = gr.Checkbox(label="Enable CUDA acceleration", value=False)
                         channel_warning = gr.Markdown("", visible=False)
                         
-                        start_btn = gr.Button("🚀 开始执行", variant="primary", size="lg")
+                        start_btn = gr.Button("🚀 Start", variant="primary", size="lg")
 
                     with gr.Column(scale=2):
-                        log_output = gr.Textbox(label="执行日志", lines=20, interactive=False)
-                        video_preview = gr.Video(label="视频预览", interactive=False)
-                        result_files = gr.File(label="输出文件（点击下载）", interactive=False)
+                        log_output = gr.Textbox(label="Progress Log", lines=20, interactive=False)
+                        video_preview = gr.Video(label="Video Preview", interactive=False)
+                        result_files = gr.File(label="Output Files (click to download)", interactive=False)
 
-                # 渠道验证并更新模型列表
+                import_btn.click(fn=import_media_for_webui, inputs=[media_source, remote_url, cookies_file], outputs=[input_file, import_status])
+                voxcpm2_profile.change(fn=selected_voxcpm2_voice_status, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_test_btn.click(fn=test_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile, voxcpm2_script], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_test_again_btn.click(fn=test_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile, voxcpm2_script], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_use_btn.click(fn=use_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio]).then(fn=lambda profile: profile, inputs=[voxcpm2_profile], outputs=[voice_role])
+                voxcpm2_play_selected_btn.click(fn=selected_voxcpm2_voice_status, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_replace_btn.click(fn=lambda profile: ("Replacement mode: current selected voice remains active until you choose a new audition.", selected_voxcpm2_voice_status(profile)[1]), inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
+
+                # Validate providers and update model list
                 def validate_recogn(choice, prev):
                     idx = _recogn_index_from_display(choice)
 
                     _rs=recognition.is_input_api(recogn_type=idx, return_str=True)
                     if _rs is not True:
-                        msg = "渠道「{}」暂不可用，已自动回退".format(choice)
+                        msg = "Provider '{}' is unavailable; reverted automatically".format(choice)
                         gr.Warning(msg)
                         return prev, f"⚠️ {msg}", gr.update()
 
@@ -1043,7 +1118,7 @@ def build_ui():
                     idx = _translate_index_from_display(choice)
                     _rs=translator.is_allow_translate(translate_type=idx, return_str=True)
                     if _rs is not True:
-                        msg = "渠道「{}」暂不可用，已自动回退".format(choice)
+                        msg = "Provider '{}' is unavailable; reverted automatically".format(choice)
                         gr.Warning(msg)
                         return prev, f"⚠️ {msg}"
                     return choice, ""
@@ -1053,7 +1128,7 @@ def build_ui():
                     warning = ""
                     _rs=tts.is_input_api(tts_type=idx, return_str=True)
                     if _rs is not True:
-                        msg = "渠道「{}」暂不可用，已自动回退".format(choice)
+                        msg = "Provider '{}' is unavailable; reverted automatically".format(choice)
                         gr.Warning(msg)
                         choice = prev
                         warning = f"⚠️ {msg}"
@@ -1084,9 +1159,9 @@ def build_ui():
 
                 target_lang.change(fn=update_voice_roles, inputs=[tts_choice, target_lang], outputs=[voice_role])
 
-                # 执行翻译
-                _BTN_RUNNING = gr.update(value="⏳ 执行中...", interactive=False)
-                _BTN_IDLE = gr.update(value="🚀 开始执行", interactive=True)
+                # Run translation
+                _BTN_RUNNING = gr.update(value="⏳ Running...", interactive=False)
+                _BTN_IDLE = gr.update(value="🚀 Start", interactive=True)
                 
                 def run_translation(file_path, recogn_display, model_name, translate_display,
                                     source_display, target_display, tts_display, voice_role_name,
@@ -1097,7 +1172,7 @@ def build_ui():
                                     cuda_val):
                     print(f'{file_path=}')
                     if not file_path:
-                        yield "❌ 请先选择一个视频或音频文件", None, [], _BTN_IDLE
+                        yield "❌ Please select or import a media file first", None, [], _BTN_IDLE
                         return
                     app_cfg.current_status = 'ing'
                     # 清空上次的日志、预览和输出，显示执行中状态
@@ -1141,7 +1216,7 @@ def build_ui():
                         from dataclasses import asdict
                         common_params = {'name': file_path, "cache_folder": _cache_folder}
                         common_params.update(asdict(_file_obj))
-                        yield log(f"源文件: {Path(file_path).name}"), None, [], _BTN_RUNNING
+                        yield log(f"Source file: {Path(file_path).name}"), None, [], _BTN_RUNNING
 
                         vtv_params = {
                             "source_language_code": source_code, "target_language_code": target_code,

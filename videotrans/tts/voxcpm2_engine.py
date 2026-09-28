@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import importlib
+import inspect
+import re
+import shutil
+from pathlib import Path
+from typing import Callable
+
+from videotrans.configure.config import logger
+from videotrans.tts.voxcpm2_profiles import VoxCPM2Profile
+from videotrans.tts.voxcpm2_scheduler import VoxCPM2ChunkJob
+from videotrans.tts.voxcpm2_voice import SelectedVoice, build_voxcpm2_generate_kwargs
+
+
+def _torch():
+    return importlib.import_module("torch")
+
+
+def detect_voxcpm2_devices(max_workers: int | None = None) -> list[str]:
+    try:
+        torch = _torch()
+    except ImportError:
+        return ["cpu"]
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        count = torch.cuda.device_count()
+        if max_workers is not None:
+            count = min(count, max_workers)
+        return [f"cuda:{index}" for index in range(count)]
+    return ["cpu"]
+
+
+def split_long_text(text: str, max_chars: int = 4096) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+    sentences = [part.strip() for part in re.findall(r"[^.!?。！？]+[.!?。！？]?", text) if part.strip()]
+    parts: list[str] = []
+    current = ""
+    for sentence in sentences:
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+        if len(sentence) <= max_chars:
+            current = sentence
+            continue
+        parts.extend(sentence[start : start + max_chars] for start in range(0, len(sentence), max_chars))
+        current = ""
+    if current:
+        parts.append(current)
+    return parts
+
+
+class BuiltinVoxCPM2Worker:
+    def __init__(self, worker_id: int, device: str, model_factory: Callable[[str], object] | None = None):
+        self.worker_id = worker_id
+        self.device = device
+        self._model_factory = model_factory or self._default_model_factory
+        self._model = None
+
+    def _default_model_factory(self, device: str):
+        voxcpm_module = importlib.import_module("voxcpm")
+        return voxcpm_module.VoxCPM.from_pretrained("openbmb/VoxCPM2", device=device)
+
+    @property
+    def model(self):
+        if self._model is None:
+            self._model = self._model_factory(self.device)
+            logger.info("VoxCPM2 worker %s ready on %s", self.worker_id, self.device)
+            print(f"VoxCPM2 worker {self.worker_id} ready on {self.device}", flush=True)
+        return self._model
+
+    def generate(self, job: VoxCPM2ChunkJob) -> str:
+        if job.selected_voice is None:
+            raise RuntimeError("VoxCPM2 selected voice is required")
+        return str(self.generate_to_file(job.text, Path(job.output_path), job.selected_voice))
+
+    def generate_to_file(self, text: str, output_path: str | Path, selected_voice: SelectedVoice) -> Path:
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        result = self._run_generate(build_voxcpm2_generate_kwargs(text, selected_voice))
+        source = Path(result) if result else output
+        if source != output and source.exists():
+            shutil.copyfile(source, output)
+        return output
+
+    def generate_profile_audition(self, profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        result = self._run_generate(
+            {
+                "text": text,
+                "prompt_text": profile.instruction,
+                "cfg_value": 2.0,
+                "inference_timesteps": 10,
+                "max_len": 4096,
+                "retry_badcase": True,
+                "retry_badcase_max_times": 3,
+                "normalize": True,
+                "denoise": True,
+                "streaming": False,
+            }
+        )
+        source = Path(result) if result else output
+        if source != output and source.exists():
+            shutil.copyfile(source, output)
+        return output
+
+    def _run_generate(self, kwargs: dict[str, str | float | int | bool]) -> str | Path | None:
+        generate = getattr(self.model, "_generate")
+        signature = inspect.signature(generate)
+        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        filtered = kwargs if accepts_kwargs else {key: value for key, value in kwargs.items() if key in signature.parameters}
+        return generate(**filtered)
+
+
+def generate_voxcpm2_audition(profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:
+    device = detect_voxcpm2_devices(max_workers=1)[0]
+    return BuiltinVoxCPM2Worker(worker_id=0, device=device).generate_profile_audition(profile, text, output_path)
