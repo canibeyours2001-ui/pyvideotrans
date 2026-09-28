@@ -2,9 +2,9 @@
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 from videotrans.configure._paths import ROOT_DIR
 from videotrans.configure._logging import _write_with_retry
@@ -12,7 +12,7 @@ from videotrans.configure.constants import (
     DEFAULT_GEMINI_MODEL, ChatTTS_VOICE, Qwentts_Models,
     Whisper_Models, Zijiehuoshan_Model, Zhipuai_Model, Localllm_Model, Azure_Model,
     Chatgpt_Model, Openairecognapi_Model, Qpenaitts_Model, Qwenmt_Model, Ai302_Models,
-    Whisper_cpp_models, Deepseek_Model, Openrouter_Model, Litellm_Model, APIRoute_Model, Guiji_Model, MINIMAX_MODELS,
+    Whisper_cpp_models, Deepseek_Model, Openrouter_Model, Litellm_Model, APIRoute_Model, CheaperInference_Model, Guiji_Model, MINIMAX_MODELS,
     XIAOMI_MODELS
 )
 
@@ -117,6 +117,7 @@ class AppSettings:
             "openrouter_model": Openrouter_Model,
             "litellm_model": Litellm_Model,
             "api_route_model": APIRoute_Model,
+            "cheaperinference_model": CheaperInference_Model,
             "guiji_model": Guiji_Model,
             "zijiehuoshan_model": Zijiehuoshan_Model,
             "model_list": Whisper_Models,
@@ -140,6 +141,7 @@ class AppSettings:
             "del_end_punc": True,
             "force_lib": False,
             "hw_decode": False,
+            "bit8": False,# 针对 qwen3-tts和glmasr使用8位量化处理？
             "preset": "slow",
             "ffmpeg_cmd": "",
             "aisendsrt": True,
@@ -152,7 +154,7 @@ class AppSettings:
             "batch_nums": 0,
             "uvr_models": "spleeter",
 
-            "max_audio_speed_rate": 100,
+            "max_audio_speed_rate": 50,
             "max_video_pts_rate": 10,
 
             "threshold": 0.45,
@@ -168,7 +170,7 @@ class AppSettings:
             "vad_type": "silero",
 
             "trans_thread": 10,
-            "aitrans_thread": 50,
+            "aitrans_thread": 40,
             "translation_wait": 0.1,
             "dubbing_wait": 1,
             "dubbing_thread": 1,
