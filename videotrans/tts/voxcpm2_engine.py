@@ -107,10 +107,15 @@ class BuiltinVoxCPM2Worker:
         return output
 
     def _run_generate(self, kwargs: dict[str, str | float | int | bool]) -> object:
-        generate = getattr(self.model, "generate", None) or getattr(self.model, "_generate")
+        generate = getattr(self.model, "generate", None)
+        if generate is not None:
+            call_kwargs = {key: value for key, value in kwargs.items() if key != "streaming"}
+        else:
+            generate = getattr(self.model, "_generate")
+            call_kwargs = kwargs
         signature = inspect.signature(generate)
         accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
-        filtered = kwargs if accepts_kwargs else {key: value for key, value in kwargs.items() if key in signature.parameters}
+        filtered = call_kwargs if accepts_kwargs else {key: value for key, value in call_kwargs.items() if key in signature.parameters}
         return generate(**filtered)
 
     def _write_generation_result(self, result: object, output: Path) -> None:
@@ -126,14 +131,15 @@ class BuiltinVoxCPM2Worker:
     @staticmethod
     def _waveform_from_result(result: object) -> np.ndarray:
         if inspect.isgenerator(result):
-            generator = result
-            try:
-                result = next(generator)
-            finally:
-                generator.close()
+            chunks = [np.asarray(chunk, dtype=np.float32).reshape(-1) for chunk in result]
+            if not chunks:
+                raise RuntimeError("VoxCPM2 did not return audio data")
+            return np.concatenate(chunks)
         waveform = np.asarray(result, dtype=np.float32)
         if waveform.ndim > 1:
             waveform = np.squeeze(waveform)
+        if waveform.size == 0:
+            raise RuntimeError("VoxCPM2 did not return audio data")
         return waveform
 
 

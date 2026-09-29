@@ -144,7 +144,6 @@ def build_voxcpm2_generate_kwargs(text: str, selected_voice: SelectedVoice) -> d
         "retry_badcase_max_times": 3,
         "normalize": True,
         "denoise": True,
-        "streaming": False,
     }
 
 

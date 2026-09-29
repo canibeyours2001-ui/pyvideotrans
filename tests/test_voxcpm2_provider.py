@@ -117,3 +117,61 @@ def test_voxcpm_worker_writes_generator_return_to_wav(tmp_path):
     audio, sample_rate = sf.read(out_path)
     assert sample_rate == 22050
     assert audio.shape[0] == 120
+
+
+def test_profile_audition_public_generate_does_not_receive_streaming_kwarg(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from videotrans.tts._voxcpm2 import BuiltinVoxCPM2Worker
+    from videotrans.tts.voxcpm2_profiles import get_profile
+
+    class FakeModel:
+        class TtsModel:
+            sample_rate = 24000
+
+        tts_model = TtsModel()
+
+        def generate(self, **kwargs):
+            assert "streaming" not in kwargs, "VoxCPM.generate() hardcodes streaming=False in voxcpm 2.0.3"
+            assert kwargs["text"].startswith("(")
+            return np.zeros(240, dtype=np.float32)
+
+    worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
+    out_path = tmp_path / "audition.wav"
+
+    worker.generate_profile_audition(get_profile("u_aung"), "မင်္ဂလာပါ", out_path)
+
+    audio, sample_rate = sf.read(out_path)
+    assert sample_rate == 24000
+    assert audio.shape[0] == 240
+
+
+def test_voxcpm_generator_chunks_are_all_consumed_before_wav_write(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from videotrans.tts._voxcpm2 import BuiltinVoxCPM2Worker
+
+    class FakeModel:
+        class TtsModel:
+            sample_rate = 16000
+
+        tts_model = TtsModel()
+
+        def _generate(self, **kwargs):
+            yield np.ones(80, dtype=np.float32)
+            yield np.zeros(40, dtype=np.float32)
+
+    worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
+    out_path = tmp_path / "stream.wav"
+
+    worker.generate_profile_audition(
+        profile=__import__("videotrans.tts.voxcpm2_profiles", fromlist=["get_profile"]).get_profile("u_aung"),
+        text="မင်္ဂလာပါ",
+        output_path=out_path,
+    )
+
+    audio, sample_rate = sf.read(out_path)
+    assert sample_rate == 16000
+    assert audio.shape[0] == 120
