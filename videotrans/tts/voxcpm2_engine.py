@@ -7,6 +7,9 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+import soundfile as sf
+
 from videotrans.configure.config import logger
 from videotrans.tts.voxcpm2_profiles import VoxCPM2Profile
 from videotrans.tts.voxcpm2_scheduler import VoxCPM2ChunkJob
@@ -81,9 +84,7 @@ class BuiltinVoxCPM2Worker:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
         result = self._run_generate(build_voxcpm2_generate_kwargs(text, selected_voice))
-        source = Path(result) if result else output
-        if source != output and source.exists():
-            shutil.copyfile(source, output)
+        self._write_generation_result(result, output)
         return output
 
     def generate_profile_audition(self, profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:
@@ -91,8 +92,7 @@ class BuiltinVoxCPM2Worker:
         output.parent.mkdir(parents=True, exist_ok=True)
         result = self._run_generate(
             {
-                "text": text,
-                "prompt_text": profile.instruction,
+                "text": f"({profile.instruction}){text}",
                 "cfg_value": 2.0,
                 "inference_timesteps": 10,
                 "max_len": 4096,
@@ -103,17 +103,38 @@ class BuiltinVoxCPM2Worker:
                 "streaming": False,
             }
         )
-        source = Path(result) if result else output
-        if source != output and source.exists():
-            shutil.copyfile(source, output)
+        self._write_generation_result(result, output)
         return output
 
-    def _run_generate(self, kwargs: dict[str, str | float | int | bool]) -> str | Path | None:
-        generate = getattr(self.model, "_generate")
+    def _run_generate(self, kwargs: dict[str, str | float | int | bool]) -> object:
+        generate = getattr(self.model, "generate", None) or getattr(self.model, "_generate")
         signature = inspect.signature(generate)
         accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
         filtered = kwargs if accepts_kwargs else {key: value for key, value in kwargs.items() if key in signature.parameters}
         return generate(**filtered)
+
+    def _write_generation_result(self, result: object, output: Path) -> None:
+        if isinstance(result, str | Path):
+            source = Path(result)
+            if source != output and source.exists():
+                shutil.copyfile(source, output)
+            return
+        waveform = self._waveform_from_result(result)
+        sample_rate = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 24000))
+        sf.write(output, waveform, sample_rate)
+
+    @staticmethod
+    def _waveform_from_result(result: object) -> np.ndarray:
+        if inspect.isgenerator(result):
+            generator = result
+            try:
+                result = next(generator)
+            finally:
+                generator.close()
+        waveform = np.asarray(result, dtype=np.float32)
+        if waveform.ndim > 1:
+            waveform = np.squeeze(waveform)
+        return waveform
 
 
 def generate_voxcpm2_audition(profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:

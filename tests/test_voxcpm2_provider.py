@@ -59,3 +59,61 @@ def test_fake_voxcpm_worker_writes_output_with_selected_voice_args(tmp_path):
     assert captured["reference_wav_path"] == str(selected.wav_path)
     assert captured["prompt_wav_path"] == str(selected.wav_path)
     assert captured["prompt_text"] == "exact prompt"
+
+
+def test_voxcpm_worker_writes_waveform_return_to_wav(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from videotrans.tts._voxcpm2 import BuiltinVoxCPM2Worker
+
+    class FakeModel:
+        class TtsModel:
+            sample_rate = 24000
+
+        tts_model = TtsModel()
+
+        def generate(self, **kwargs):
+            return np.zeros(240, dtype=np.float32)
+
+    worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
+    out_path = tmp_path / "audition.wav"
+
+    worker.generate_profile_audition(
+        profile=__import__("videotrans.tts.voxcpm2_profiles", fromlist=["get_profile"]).get_profile("u_aung"),
+        text="မင်္ဂလာပါ",
+        output_path=out_path,
+    )
+
+    audio, sample_rate = sf.read(out_path)
+    assert sample_rate == 24000
+    assert audio.shape[0] == 240
+
+
+def test_voxcpm_worker_writes_generator_return_to_wav(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from videotrans.tts._voxcpm2 import BuiltinVoxCPM2Worker
+
+    class FakeModel:
+        class TtsModel:
+            sample_rate = 22050
+
+        tts_model = TtsModel()
+
+        def _generate(self, **kwargs):
+            yield np.zeros(120, dtype=np.float32)
+
+    worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
+    out_path = tmp_path / "audition.wav"
+
+    worker.generate_profile_audition(
+        profile=__import__("videotrans.tts.voxcpm2_profiles", fromlist=["get_profile"]).get_profile("u_aung"),
+        text="မင်္ဂလာပါ",
+        output_path=out_path,
+    )
+
+    audio, sample_rate = sf.read(out_path)
+    assert sample_rate == 22050
+    assert audio.shape[0] == 120
