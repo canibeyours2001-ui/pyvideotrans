@@ -7,7 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from videotrans.tts.voxcpm2_voice import SelectedVoice
 
@@ -46,7 +46,11 @@ class VoxCPM2Scheduler:
             raise ValueError("At least one VoxCPM2 worker is required")
         self.workers = list(workers)
 
-    def run(self, jobs: list[VoxCPM2ChunkJob]) -> list[VoxCPM2ChunkResult]:
+    def run(
+        self,
+        jobs: list[VoxCPM2ChunkJob],
+        should_stop: Callable[[], bool] | None = None,
+    ) -> list[VoxCPM2ChunkResult]:
         work_queue: queue.Queue[VoxCPM2ChunkJob] = queue.Queue()
         result_queue: queue.Queue[VoxCPM2ChunkResult | VoxCPM2SchedulerError] = queue.Queue()
         for job in jobs:
@@ -54,6 +58,8 @@ class VoxCPM2Scheduler:
 
         def consume(worker: VoxCPM2WorkerProtocol) -> None:
             while True:
+                if should_stop is not None and should_stop():
+                    return
                 try:
                     job = work_queue.get_nowait()
                 except queue.Empty:
@@ -80,6 +86,8 @@ class VoxCPM2Scheduler:
             if isinstance(item, VoxCPM2SchedulerError):
                 raise item
             results.append(item)
+        if should_stop is not None and should_stop():
+            return sorted(results, key=lambda result: result.chunk_id)
         if len(results) != len(jobs):
             raise VoxCPM2SchedulerError(-1, f"scheduler finished with {len(results)} / {len(jobs)} chunk results")
         return sorted(results, key=lambda result: result.chunk_id)

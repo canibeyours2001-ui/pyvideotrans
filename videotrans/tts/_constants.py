@@ -94,8 +94,7 @@ LOCAL_BUILTIN = [
     PIPER_TTS,
     CHATTERBOX_TTS,
     Supertonic_TTS,
-    VITSCNEN_TTS,
-    VOXCPM_TTS
+    VITSCNEN_TTS
 ]
 
 # 配音角色根据语言不同而变化的渠道

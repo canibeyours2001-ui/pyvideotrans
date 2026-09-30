@@ -63,3 +63,22 @@ def test_failed_chunk_reports_index_without_deadlock():
 
     assert exc.value.chunk_id == 2
     assert "boom" in str(exc.value)
+
+
+def test_scheduler_stops_claiming_jobs_after_cancellation():
+    from videotrans.tts.voxcpm2_scheduler import VoxCPM2ChunkJob, VoxCPM2Scheduler
+
+    worker = FakeWorker(0, "cpu", {1: 0, 2: 0, 3: 0}, [])
+    calls = 0
+
+    def should_stop():
+        nonlocal calls
+        calls += 1
+        return calls > 1
+
+    results = VoxCPM2Scheduler([worker]).run(
+        [VoxCPM2ChunkJob(i, f"chunk {i}", f"{i}.wav") for i in range(1, 4)],
+        should_stop=should_stop,
+    )
+
+    assert [result.chunk_id for result in results] == [1]

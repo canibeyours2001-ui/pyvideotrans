@@ -71,7 +71,9 @@ class VoxCPM2BuiltinTTS(BaseTTS):
                 merge_groups[index] = (filename, outputs)
             for sub_index, part in enumerate(parts, start=1):
                 jobs.append(VoxCPM2ChunkJob(index * 10_000 + sub_index, part, outputs[sub_index - 1], selected))
-        results = VoxCPM2Scheduler(workers).run(jobs)
+        results = VoxCPM2Scheduler(workers).run(jobs, should_stop=self._exit)
+        if self._exit():
+            return
         for final_path, split_paths in merge_groups.values():
             concat_txt = final_path.with_suffix(".concat.txt")
             create_concat_txt(split_paths, concat_txt=concat_txt)
