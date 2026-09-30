@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
+
 
 def test_voxcpm2_provider_registered_as_builtin_without_api_url():
     from videotrans import tts
@@ -38,15 +41,15 @@ def test_fake_voxcpm_worker_writes_output_with_selected_voice_args(tmp_path):
         model_id="openbmb/VoxCPM2",
         model_version="2.0.3",
     )
-    selected.wav_path.write_bytes(b"voice")
+    sf.write(str(selected.wav_path), np.zeros(240, dtype=np.float32), 24000)
 
     class FakeModel:
-        def _generate(self, **kwargs):
+        def generate(self, **kwargs):
             if "seed" in kwargs:
                 raise AssertionError("seed must not be passed")
             captured.update(kwargs)
             out = tmp_path / "generated.wav"
-            out.write_bytes(b"generated")
+            sf.write(str(out), np.ones(240, dtype=np.float32), 24000)
             return str(out)
 
     worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
@@ -54,7 +57,7 @@ def test_fake_voxcpm_worker_writes_output_with_selected_voice_args(tmp_path):
 
     worker.generate_to_file("hello", out_path, selected)
 
-    assert out_path.read_bytes() == b"generated"
+    assert sf.info(str(out_path)).frames == 240
     assert captured["text"] == "hello"
     assert captured["reference_wav_path"] == str(selected.wav_path)
     assert captured["prompt_wav_path"] == str(selected.wav_path)
@@ -102,7 +105,7 @@ def test_voxcpm_worker_writes_generator_return_to_wav(tmp_path):
 
         tts_model = TtsModel()
 
-        def _generate(self, **kwargs):
+        def generate(self, **kwargs):
             yield np.zeros(120, dtype=np.float32)
 
     worker = BuiltinVoxCPM2Worker(worker_id=0, device="cpu", model_factory=lambda device: FakeModel())
@@ -159,7 +162,7 @@ def test_voxcpm_generator_chunks_are_all_consumed_before_wav_write(tmp_path):
 
         tts_model = TtsModel()
 
-        def _generate(self, **kwargs):
+        def generate(self, **kwargs):
             yield np.ones(80, dtype=np.float32)
             yield np.zeros(40, dtype=np.float32)
 

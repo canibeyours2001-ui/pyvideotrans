@@ -262,6 +262,11 @@ def selected_voxcpm2_voice_status(profile_display: str):
     return "✅ Voice selected for dubbing", str(selected.wav_path)
 
 
+def replace_voxcpm2_voice(profile_display: str):
+    _, audio = selected_voxcpm2_voice_status(profile_display)
+    return "Replacement mode: current selected voice remains active until you choose a new audition.", audio
+
+
 # ---------------------------------------------------------------------------
 # 渠道设置面板定义
 # ---------------------------------------------------------------------------
@@ -1022,13 +1027,14 @@ def build_ui():
                         _saved_role = _user_params.get('voice_role', 'No')
                         _init_role_val = _saved_role if _saved_role in _init_roles else _init_roles[0]
                         voice_role = gr.Dropdown(choices=_init_roles, value=_init_role_val, label="Voice Profile", interactive=True)
+                        _voxcpm2_profiles = profile_names()
+                        _initial_voxcpm2_role = _init_role_val if _init_role_val in _voxcpm2_profiles else _voxcpm2_profiles[-1]
+                        voxcpm2_role_state = gr.State(value=_initial_voxcpm2_role)
 
-                        with gr.Accordion("VoxCPM2 Voice Studio", open=False):
-                            voxcpm2_profile = gr.Dropdown(choices=profile_names(), value=profile_names()[-1], label="Profile", interactive=True)
+                        with gr.Accordion("VoxCPM2 Voice Studio", open=False, visible="VoxCPM" in TTS_NAMES[_init_tts_idx]) as voxcpm2_studio:
                             voxcpm2_script = gr.Textbox(label="Test Script", value=DEFAULT_TEST_SCRIPT, lines=3, interactive=True)
                             with gr.Row():
-                                voxcpm2_test_btn = gr.Button("Test Voice")
-                                voxcpm2_test_again_btn = gr.Button("Test Voice Again")
+                                voxcpm2_test_btn = gr.Button("Generate Test Voice")
                                 voxcpm2_use_btn = gr.Button("Use This Voice for Dubbing", variant="primary")
                             voxcpm2_status = gr.Textbox(label="Voice Status", value="No selected voice yet.", interactive=False)
                             voxcpm2_audio = gr.Audio(label="Latest / Selected Voice", interactive=False)
@@ -1067,12 +1073,10 @@ def build_ui():
                         result_files = gr.File(label="Output Files (click to download)", interactive=False)
 
                 import_btn.click(fn=import_media_for_webui, inputs=[media_source, remote_url, cookies_file], outputs=[input_file, import_status])
-                voxcpm2_profile.change(fn=selected_voxcpm2_voice_status, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
-                voxcpm2_test_btn.click(fn=test_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile, voxcpm2_script], outputs=[voxcpm2_status, voxcpm2_audio])
-                voxcpm2_test_again_btn.click(fn=test_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile, voxcpm2_script], outputs=[voxcpm2_status, voxcpm2_audio])
-                voxcpm2_use_btn.click(fn=use_voxcpm2_voice_for_webui, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio]).then(fn=lambda profile: profile, inputs=[voxcpm2_profile], outputs=[voice_role])
-                voxcpm2_play_selected_btn.click(fn=selected_voxcpm2_voice_status, inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
-                voxcpm2_replace_btn.click(fn=lambda profile: ("Replacement mode: current selected voice remains active until you choose a new audition.", selected_voxcpm2_voice_status(profile)[1]), inputs=[voxcpm2_profile], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_test_btn.click(fn=test_voxcpm2_voice_for_webui, inputs=[voice_role, voxcpm2_script], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_use_btn.click(fn=use_voxcpm2_voice_for_webui, inputs=[voice_role], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_play_selected_btn.click(fn=selected_voxcpm2_voice_status, inputs=[voice_role], outputs=[voxcpm2_status, voxcpm2_audio])
+                voxcpm2_replace_btn.click(fn=replace_voxcpm2_voice, inputs=[voice_role], outputs=[voxcpm2_status, voxcpm2_audio])
 
                 # Validate providers and update model list
                 def validate_recogn(choice, prev):
@@ -1123,7 +1127,7 @@ def build_ui():
                         return prev, f"⚠️ {msg}"
                     return choice, ""
 
-                def tts_change_handler(choice, prev, target_display):
+                def tts_change_handler(choice, prev, target_display, current_role=None, saved_voxcpm2_role=None):
                     idx = _tts_index_from_display(choice)
                     warning = ""
                     _rs=tts.is_input_api(tts_type=idx, return_str=True)
@@ -1140,11 +1144,22 @@ def build_ui():
                             roles = ["No"]
                     except Exception:
                         roles = ["No"]
-                    return choice, gr.update(choices=roles, value=roles[0] if roles else "No"), warning
+                    profiles = profile_names()
+                    if current_role in profiles:
+                        saved_voxcpm2_role = current_role
+                    elif saved_voxcpm2_role not in profiles:
+                        saved_voxcpm2_role = profiles[-1]
+                    is_voxcpm2 = "VoxCPM" in choice
+                    role = saved_voxcpm2_role if is_voxcpm2 and saved_voxcpm2_role in roles else roles[0]
+                    return choice, gr.update(choices=roles, value=role), warning, gr.update(visible=is_voxcpm2), saved_voxcpm2_role
 
                 recogn_choice.change(fn=validate_recogn, inputs=[recogn_choice, prev_recogn], outputs=[recogn_choice, channel_warning, model_choice])
                 translate_choice.change(fn=validate_translate, inputs=[translate_choice, prev_translate], outputs=[translate_choice, channel_warning])
-                tts_choice.change(fn=tts_change_handler, inputs=[tts_choice, prev_tts, target_lang], outputs=[tts_choice, voice_role, channel_warning])
+                tts_choice.change(
+                    fn=tts_change_handler,
+                    inputs=[tts_choice, prev_tts, target_lang, voice_role, voxcpm2_role_state],
+                    outputs=[tts_choice, voice_role, channel_warning, voxcpm2_studio, voxcpm2_role_state],
+                )
 
                 def update_voice_roles(tts_display, target_display):
                     tts_idx = _tts_index_from_display(tts_display)
@@ -1337,6 +1352,4 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         print(f"\n❌ 启动失败: {e}")
-
-
 

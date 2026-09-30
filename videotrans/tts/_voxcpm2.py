@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from videotrans.configure.config import logger
@@ -33,6 +34,10 @@ from videotrans.tts.voxcpm2_voice import default_voice_store
 from videotrans.util.help_ffmpeg import concat_multi_audio, create_concat_txt
 
 
+_workers: dict[tuple[type[BuiltinVoxCPM2Worker], str], BuiltinVoxCPM2Worker] = {}
+_workers_lock = threading.Lock()
+
+
 def _split_output_path(filename: Path, sub_index: int) -> Path:
     return filename if sub_index == 1 else filename.with_name(f"{filename.stem}_{sub_index}{filename.suffix}")
 
@@ -40,7 +45,15 @@ def _split_output_path(filename: Path, sub_index: int) -> Path:
 class VoxCPM2BuiltinTTS(BaseTTS):
     def _exec(self) -> None:
         devices = detect_voxcpm2_devices()
-        workers = [BuiltinVoxCPM2Worker(index, device) for index, device in enumerate(devices)]
+        workers: list[BuiltinVoxCPM2Worker] = []
+        with _workers_lock:
+            for index, device in enumerate(devices):
+                key = (BuiltinVoxCPM2Worker, device)
+                worker = _workers.get(key)
+                if worker is None:
+                    worker = BuiltinVoxCPM2Worker(index, device)
+                    _workers[key] = worker
+                workers.append(worker)
         jobs: list[VoxCPM2ChunkJob] = []
         merge_groups: dict[int, tuple[Path, list[Path]]] = {}
         store = default_voice_store()

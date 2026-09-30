@@ -4,6 +4,7 @@ import importlib
 import inspect
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -62,18 +63,24 @@ class BuiltinVoxCPM2Worker:
         self.device = device
         self._model_factory = model_factory or self._default_model_factory
         self._model = None
+        self._lock = threading.RLock()
 
     def _default_model_factory(self, device: str):
         voxcpm_module = importlib.import_module("voxcpm")
-        return voxcpm_module.VoxCPM.from_pretrained("openbmb/VoxCPM2", device=device)
+        return voxcpm_module.VoxCPM.from_pretrained(
+            "openbmb/VoxCPM2",
+            device=device,
+            load_denoiser=False,
+        )
 
     @property
     def model(self):
-        if self._model is None:
-            self._model = self._model_factory(self.device)
-            logger.info("VoxCPM2 worker %s ready on %s", self.worker_id, self.device)
-            print(f"VoxCPM2 worker {self.worker_id} ready on {self.device}", flush=True)
-        return self._model
+        with self._lock:
+            if self._model is None:
+                self._model = self._model_factory(self.device)
+                logger.info("VoxCPM2 worker %s ready on %s", self.worker_id, self.device)
+                print(f"VoxCPM2 worker {self.worker_id} ready on {self.device}", flush=True)
+            return self._model
 
     def generate(self, job: VoxCPM2ChunkJob) -> str:
         if job.selected_voice is None:
@@ -99,7 +106,7 @@ class BuiltinVoxCPM2Worker:
                 "retry_badcase": True,
                 "retry_badcase_max_times": 3,
                 "normalize": True,
-                "denoise": True,
+                "denoise": False,
                 "streaming": False,
             }
         )
@@ -107,26 +114,36 @@ class BuiltinVoxCPM2Worker:
         return output
 
     def _run_generate(self, kwargs: dict[str, str | float | int | bool]) -> object:
-        generate = getattr(self.model, "generate", None)
-        if generate is not None:
+        with self._lock:
+            generate = getattr(self.model, "generate")
             call_kwargs = {key: value for key, value in kwargs.items() if key != "streaming"}
-        else:
-            generate = getattr(self.model, "_generate")
-            call_kwargs = kwargs
-        signature = inspect.signature(generate)
-        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
-        filtered = call_kwargs if accepts_kwargs else {key: value for key, value in call_kwargs.items() if key in signature.parameters}
-        return generate(**filtered)
+            signature = inspect.signature(generate)
+            accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+            filtered = call_kwargs if accepts_kwargs else {key: value for key, value in call_kwargs.items() if key in signature.parameters}
+            return generate(**filtered)
 
     def _write_generation_result(self, result: object, output: Path) -> None:
         if isinstance(result, str | Path):
             source = Path(result)
-            if source != output and source.exists():
+            if not source.exists():
+                raise RuntimeError(f"VoxCPM2 did not return a valid WAV: {source}")
+            if source != output:
                 shutil.copyfile(source, output)
+            self._validate_wav(output)
             return
         waveform = self._waveform_from_result(result)
         sample_rate = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 24000))
-        sf.write(output, waveform, sample_rate)
+        sf.write(str(output), waveform, sample_rate)
+        self._validate_wav(output)
+
+    @staticmethod
+    def _validate_wav(path: Path) -> None:
+        try:
+            info = sf.info(str(path))
+        except RuntimeError as exc:
+            raise RuntimeError(f"VoxCPM2 did not return a valid WAV: {path}") from exc
+        if info.format.upper() != "WAV" or info.frames <= 0 or info.samplerate <= 0:
+            raise RuntimeError(f"VoxCPM2 did not return a valid WAV: {path}")
 
     @staticmethod
     def _waveform_from_result(result: object) -> np.ndarray:
@@ -143,6 +160,16 @@ class BuiltinVoxCPM2Worker:
         return waveform
 
 
+_audition_workers: dict[tuple[type[BuiltinVoxCPM2Worker], str], BuiltinVoxCPM2Worker] = {}
+_audition_workers_lock = threading.Lock()
+
+
 def generate_voxcpm2_audition(profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:
     device = detect_voxcpm2_devices(max_workers=1)[0]
-    return BuiltinVoxCPM2Worker(worker_id=0, device=device).generate_profile_audition(profile, text, output_path)
+    key = (BuiltinVoxCPM2Worker, device)
+    with _audition_workers_lock:
+        worker = _audition_workers.get(key)
+        if worker is None:
+            worker = BuiltinVoxCPM2Worker(worker_id=0, device=device)
+            _audition_workers[key] = worker
+    return worker.generate_profile_audition(profile, text, output_path)
