@@ -6,7 +6,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 import numpy as np
 import soundfile as sf
@@ -160,16 +160,26 @@ class BuiltinVoxCPM2Worker:
         return waveform
 
 
-_audition_workers: dict[tuple[type[BuiltinVoxCPM2Worker], str], BuiltinVoxCPM2Worker] = {}
-_audition_workers_lock = threading.Lock()
+_workers: dict[tuple[type[BuiltinVoxCPM2Worker], str], BuiltinVoxCPM2Worker] = {}
+_workers_lock = threading.Lock()
+
+
+def get_voxcpm2_worker(
+    device: str,
+    worker_id: int = 0,
+    worker_type: type[BuiltinVoxCPM2Worker] | None = None,
+) -> BuiltinVoxCPM2Worker:
+    worker_type = worker_type or BuiltinVoxCPM2Worker
+    key = (worker_type, device)
+    with _workers_lock:
+        worker = _workers.get(key)
+        if worker is None:
+            worker = worker_type(worker_id=worker_id, device=device)
+            _workers[key] = worker
+        return cast(BuiltinVoxCPM2Worker, worker)
 
 
 def generate_voxcpm2_audition(profile: VoxCPM2Profile, text: str, output_path: str | Path) -> Path:
     device = detect_voxcpm2_devices(max_workers=1)[0]
-    key = (BuiltinVoxCPM2Worker, device)
-    with _audition_workers_lock:
-        worker = _audition_workers.get(key)
-        if worker is None:
-            worker = BuiltinVoxCPM2Worker(worker_id=0, device=device)
-            _audition_workers[key] = worker
+    worker = get_voxcpm2_worker(device)
     return worker.generate_profile_audition(profile, text, output_path)

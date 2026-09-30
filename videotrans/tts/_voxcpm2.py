@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 from videotrans.configure.config import logger
@@ -26,16 +25,14 @@ def detect_voxcpm2_devices(max_workers: int | None = None) -> list[str]:
 from videotrans.tts._base import BaseTTS
 from videotrans.tts.voxcpm2_engine import (
     BuiltinVoxCPM2Worker,
+    get_voxcpm2_worker,
     split_long_text,
 )
 from videotrans.tts.voxcpm2_profiles import get_profile
 from videotrans.tts.voxcpm2_scheduler import VoxCPM2ChunkJob, VoxCPM2Scheduler
 from videotrans.tts.voxcpm2_voice import default_voice_store
 from videotrans.util.help_ffmpeg import concat_multi_audio, create_concat_txt
-
-
-_workers: dict[tuple[type[BuiltinVoxCPM2Worker], str], BuiltinVoxCPM2Worker] = {}
-_workers_lock = threading.Lock()
+from videotrans.util.help_misc import vail_file
 
 
 def _split_output_path(filename: Path, sub_index: int) -> Path:
@@ -44,20 +41,24 @@ def _split_output_path(filename: Path, sub_index: int) -> Path:
 
 class VoxCPM2BuiltinTTS(BaseTTS):
     def _exec(self) -> None:
-        devices = detect_voxcpm2_devices()
-        workers: list[BuiltinVoxCPM2Worker] = []
-        with _workers_lock:
-            for index, device in enumerate(devices):
-                key = (BuiltinVoxCPM2Worker, device)
-                worker = _workers.get(key)
-                if worker is None:
-                    worker = BuiltinVoxCPM2Worker(index, device)
-                    _workers[key] = worker
-                workers.append(worker)
+        if self._exit():
+            return
+        pending_items = [
+            item
+            for item in self.queue_tts
+            if str(item.get("text", "")).strip() and not vail_file(item.get("filename"))
+        ]
+        if not pending_items:
+            return
+        devices = detect_voxcpm2_devices() if getattr(self, "is_cuda", True) else ["cpu"]
+        workers = [
+            get_voxcpm2_worker(device, index, BuiltinVoxCPM2Worker)
+            for index, device in enumerate(devices)
+        ]
         jobs: list[VoxCPM2ChunkJob] = []
         merge_groups: dict[int, tuple[Path, list[Path]]] = {}
         store = default_voice_store()
-        for index, item in enumerate(self.queue_tts, start=1):
+        for index, item in enumerate(pending_items, start=1):
             role = item.get("role") or "movie_recap_fast"
             profile = get_profile(str(role))
             selected = store.get_selected_voice(profile.profile_id)
