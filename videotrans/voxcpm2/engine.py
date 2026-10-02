@@ -61,21 +61,35 @@ def make_generation_kwargs(text, reference_wav=None, reference_text="", control_
     return kw
 
 def _worker(gpu, model_dir, task_q, result_q):
-    if gpu is not None: os.environ["CUDA_VISIBLE_DEVICES"]=str(gpu)
+    if gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"]=str(gpu)
     os.environ.setdefault("TOKENIZERS_PARALLELISM","false")
+
+    fake_worker = os.environ.get("VOXCPM2_TEST_FAKE_WORKER") == "1"
+
     try:
-        import torch
-        from voxcpm import VoxCPM
-        device="cuda" if gpu is not None and torch.cuda.is_available() else "cpu"
-        result_q.put({"status":"loading","gpu":gpu})
-        model=VoxCPM.from_pretrained(model_dir,load_denoiser=False,optimize=False,device=device)
-        try: sr=int(model.tts_model.sample_rate)
-        except Exception: sr=48000
-        try:
-            sig=inspect.signature(model._generate); params=sig.parameters
-            accepts_any=any(p.kind==inspect.Parameter.VAR_KEYWORD for p in params.values()); supported=set(params)
-        except Exception: accepts_any=True; supported=set()
-        result_q.put({"status":"ready","gpu":gpu,"sample_rate":sr})
+        if fake_worker:
+            # GitHub Actions/headless scheduler test. This never runs unless
+            # explicitly enabled by the test environment.
+            model = None
+            sr = 48000
+            torch = None
+            accepts_any = True
+            supported = set()
+            result_q.put({"status":"ready","gpu":gpu,"sample_rate":sr})
+        else:
+            import torch
+            from voxcpm import VoxCPM
+            device="cuda" if gpu is not None and torch.cuda.is_available() else "cpu"
+            result_q.put({"status":"loading","gpu":gpu})
+            model=VoxCPM.from_pretrained(model_dir,load_denoiser=False,optimize=False,device=device)
+            try: sr=int(model.tts_model.sample_rate)
+            except Exception: sr=48000
+            try:
+                sig=inspect.signature(model._generate); params=sig.parameters
+                accepts_any=any(p.kind==inspect.Parameter.VAR_KEYWORD for p in params.values()); supported=set(params)
+            except Exception: accepts_any=True; supported=set()
+            result_q.put({"status":"ready","gpu":gpu,"sample_rate":sr})
     except Exception as e:
         result_q.put({"status":"startup_error","gpu":gpu,"error":repr(e),"traceback":traceback.format_exc()}); return
     while True:
@@ -89,7 +103,14 @@ def _worker(gpu, model_dir, task_q, result_q):
             if not accepts_any:
                 for k in list(kw):
                     if k not in supported: kw.pop(k,None)
-            wav=np.asarray(model.generate(**kw),dtype=np.float32).reshape(-1)
+            if fake_worker:
+                # Deterministic short audio makes the real multiprocessing,
+                # queueing, ordering and file-writing paths testable in CI.
+                seconds = 0.12 + 0.01 * (int(task.get("chunk_index", 0)) % 3)
+                wav = np.zeros(int(sr * seconds), dtype=np.float32)
+                time.sleep(0.03)
+            else:
+                wav=np.asarray(model.generate(**kw),dtype=np.float32).reshape(-1)
             out=Path(task["output_path"]); out.parent.mkdir(parents=True,exist_ok=True)
             sf.write(str(out),wav,sr,subtype="PCM_16")
             result_q.put({"status":"ok","batch_id":task["batch_id"],"task_id":task["task_id"],
@@ -101,12 +122,15 @@ def _worker(gpu, model_dir, task_q, result_q):
                           "error":repr(e),"traceback":traceback.format_exc()})
 
 class DualGPUVoxCPM:
-    def __init__(self, model_dir=None, status_callback:Optional[Callable[[str],None]]=None, startup_timeout=900):
+    def __init__(self, model_dir=None, status_callback:Optional[Callable[[str],None]]=None, startup_timeout=900, gpu_ids=None):
         self.model_dir=model_dir or model_path_from_env(); self.status_callback=status_callback
-        try:
-            import torch; n=torch.cuda.device_count() if torch.cuda.is_available() else 0
-        except Exception: n=0
-        self.gpu_ids=(0,1) if n>=2 else ((0,) if n==1 else (None,))
+        if gpu_ids is not None:
+            self.gpu_ids=tuple(gpu_ids)
+        else:
+            try:
+                import torch; n=torch.cuda.device_count() if torch.cuda.is_available() else 0
+            except Exception: n=0
+            self.gpu_ids=(0,1) if n>=2 else ((0,) if n==1 else (None,))
         self.ctx=mp.get_context("spawn"); self.task_q=self.ctx.Queue(); self.result_q=self.ctx.Queue()
         self.procs=[]; self.sample_rate=48000
         for gpu in self.gpu_ids: self._start(gpu,startup_timeout)
