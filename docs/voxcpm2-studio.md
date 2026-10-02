@@ -56,6 +56,6 @@ The branch adds:
 - `voxcpm>=2.0.3`
 - `yt-dlp`
 - `gdown`
-- `mega.py`
+- `mega-py-v2`
 
 VoxCPM2 itself requires an environment compatible with its PyTorch/CUDA requirements.
