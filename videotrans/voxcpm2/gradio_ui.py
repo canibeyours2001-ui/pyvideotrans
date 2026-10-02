@@ -51,18 +51,21 @@ def build_voxcpm2_studio(gr, visible=False):
             with gr.Row():
                 chunk_chars=gr.Slider(80,450,230,10,label="Chunk characters")
                 join_pause=gr.Slider(0,1000,300,25,label="Join pause (ms)")
-            live_btn=gr.Button("⚡ Generate + Live Stream",variant="primary")
+            with gr.Row():
+                live_btn=gr.Button("⚡ Generate + Live Stream",variant="primary")
+                live_stop=gr.Button("■ Stop generating",variant="stop")
             live_audio=gr.Audio(label="Live combined preview",streaming=True,autoplay=True)
             live_status=gr.Markdown()
             live_file=gr.File(label="Final WAV")
             def _stream(script,role,delivery_name,custom_text,speed_value,cfg_value,step_value,chars,pause):
                 instruction=delivery_instruction(delivery_name)
                 yield from tools.stream_voiceover(script,role,instruction,custom_text,speed_value,cfg_value,step_value,chars,pause)
-            live_btn.click(
+            live_event=live_btn.click(
                 _stream,
                 inputs=[live_script,live_role,delivery,custom,speed,cfg,steps,chunk_chars,join_pause],
                 outputs=[live_audio,live_status,live_file],
             )
+            live_stop.click(fn=None,cancels=[live_event])
 
         with gr.Tab("🎭 Voice Design"):
             profile=gr.Dropdown(choices=tools.profile_choices(),value=tools.profile_choices()[0],label="Voice profile")
