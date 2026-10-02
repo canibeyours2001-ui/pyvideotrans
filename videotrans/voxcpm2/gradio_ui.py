@@ -59,7 +59,14 @@ def build_voxcpm2_studio(gr, visible=False):
             live_file=gr.File(label="Final WAV")
             def _stream(script,role,delivery_name,custom_text,speed_value,cfg_value,step_value,chars,pause):
                 instruction=delivery_instruction(delivery_name)
-                yield from tools.stream_voiceover(script,role,instruction,custom_text,speed_value,cfg_value,step_value,chars,pause)
+                for audio,status,final_file in tools.stream_voiceover(
+                    script,role,instruction,custom_text,speed_value,cfg_value,step_value,chars,pause
+                ):
+                    yield (
+                        gr.skip() if audio is None else audio,
+                        status,
+                        gr.skip() if final_file is None else final_file,
+                    )
             live_event=live_btn.click(
                 _stream,
                 inputs=[live_script,live_role,delivery,custom,speed,cfg,steps,chunk_chars,join_pause],
@@ -90,7 +97,10 @@ def build_voxcpm2_studio(gr, visible=False):
 
         with gr.Tab("🧬 Voice Clone"):
             clone_source=gr.Radio(["Upload file","Remote upload"],value="Upload file",label="Source")
-            clone_upload=gr.File(label="Upload audio / video",file_types=["audio","video"])
+            clone_upload=gr.File(
+                label="Upload audio / video",
+                file_types=[".wav",".mp3",".m4a",".aac",".flac",".ogg",".opus",".mp4",".mkv",".webm",".mov",".avi",".m4v"],
+            )
             with gr.Column(visible=False) as clone_remote_group:
                 clone_url=gr.Textbox(label="Remote URL",placeholder="YouTube / TikTok / Facebook / X / Drive / MEGA / direct media")
                 clone_cookie=gr.File(label="Cookies.txt (optional)")
