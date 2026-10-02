@@ -62,6 +62,7 @@ jobs:
           VOXCPM2_TEST_FAKE_WORKER: "1"
           HF_HOME: /tmp/hf
           HF_HUB_CACHE: /tmp/hf/hub
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           cat > /tmp/test_voxcpm2_scheduler.py <<'PY'
           from pathlib import Path
