@@ -1,0 +1,25 @@
+name: VoxCPM2 integration smoke
+
+on:
+  pull_request:
+    paths:
+      - "webui.py"
+      - "videotrans/voxcpm2/**"
+      - "videotrans/process/voxcpm2_tts.py"
+      - "videotrans/tts/_voxcpm2builtin.py"
+      - "videotrans/tts/_constants.py"
+      - "videotrans/util/help_role.py"
+      - "videotrans/webui_media.py"
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Compile changed Python modules
+        run: |
+          python -m py_compile             webui.py             videotrans/voxcpm2/__init__.py             videotrans/voxcpm2/engine.py             videotrans/voxcpm2/library.py             videotrans/voxcpm2/gradio_tools.py             videotrans/voxcpm2/gradio_ui.py             videotrans/process/voxcpm2_tts.py             videotrans/tts/_voxcpm2builtin.py             videotrans/tts/_constants.py             videotrans/util/help_role.py             videotrans/webui_media.py
