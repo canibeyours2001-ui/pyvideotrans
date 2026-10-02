@@ -32,6 +32,7 @@ class VoxCPM2BuiltInTTS(BaseTTS):
             inference_timesteps=int(float(params.get("voxcpm2_steps",10) or 10)),
             delivery=str(params.get("voxcpm2_delivery","") or ""),
             custom_style=str(params.get("voxcpm2_custom_style","") or ""),
+            progress_callback=lambda message: self.signal(text=message),
         )
         if not ok:
             from videotrans.configure.excepts import VideoTransError
