@@ -4,6 +4,12 @@ on:
   push:
     branches: [pyvideotrans]
     paths:
+      - "webui.py"
+      - "videotrans/webui_media.py"
+      - "videotrans/process/voxcpm2_tts.py"
+      - "videotrans/tts/_voxcpm2builtin.py"
+      - "videotrans/tts/_constants.py"
+      - "videotrans/util/help_role.py"
       - "videotrans/voxcpm2/**"
       - "videotrans/configure/**"
       - "videotrans/task/simple_runnable_qt.py"
