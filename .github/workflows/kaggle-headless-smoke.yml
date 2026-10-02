@@ -23,7 +23,7 @@ jobs:
       - name: Install minimal headless test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir numpy soundfile certifi tenacity==9.1.2 tqdm urllib3 requests aiohttp httpx gradio==6.8.0
+          python -m pip install --no-cache-dir numpy soundfile certifi tenacity==9.1.2 tqdm urllib3 requests aiohttp httpx gradio==6.8.0 zhconv==1.4.3
 
       - name: Verify PySide6 is NOT installed
         run: |
@@ -98,6 +98,30 @@ jobs:
               main()
           PY
           python /tmp/test_voxcpm2_scheduler.py
+
+      - name: Verify Chinese recognition dependency
+        run: |
+          python - <<'PY'
+          import zhconv
+          print("zhconv import passed")
+          PY
+
+      - name: Verify English-only WebUI literals
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path("webui.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          bad = []
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                  if any("\u3400" <= ch <= "\u9fff" for ch in node.value):
+                      bad.append(node.value)
+          assert not bad, f"Chinese UI string literals remain: {bad[:10]}"
+          print("English-only WebUI string-literal check passed")
+          PY
 
       - name: Import WebUI headlessly without PySide6
         env:
