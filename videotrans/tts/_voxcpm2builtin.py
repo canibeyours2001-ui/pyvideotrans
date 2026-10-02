@@ -22,14 +22,18 @@ class VoxCPM2BuiltInTTS(BaseTTS):
         logs_file=f"{TEMP_DIR}/{self.uuid}/voxcpm2-{time.time()}.log"
         Path(queue_file).write_text(json.dumps(self.queue_tts,ensure_ascii=False),encoding="utf-8")
         from videotrans.process.voxcpm2_tts import voxcpm2_fun
-        # Run the outer pyVideoTrans worker on CPU: VoxCPM2 owns its one/two
-        # GPU child processes internally so it can schedule both devices.
-        return self._new_process(
-            callback=voxcpm2_fun,title="VoxCPM2 built-in dubbing",is_cuda=False,
-            kwargs={
-                "queue_tts_file":queue_file,"logs_file":logs_file,
-                "cfg_value":float(params.get("voxcpm2_cfg",2.0) or 2.0),
-                "inference_timesteps":int(float(params.get("voxcpm2_steps",10) or 10)),
-                "delivery":str(params.get("voxcpm2_delivery","") or ""),
-                "custom_style":str(params.get("voxcpm2_custom_style","") or ""),
-            })
+        # IMPORTANT: do not wrap this coordinator in pyVideoTrans's
+        # multiprocessing.Pool. Pool workers are daemonic and Python forbids
+        # them from spawning our GPU0/GPU1 model workers.
+        ok, err = voxcpm2_fun(
+            queue_tts_file=queue_file,
+            logs_file=logs_file,
+            cfg_value=float(params.get("voxcpm2_cfg",2.0) or 2.0),
+            inference_timesteps=int(float(params.get("voxcpm2_steps",10) or 10)),
+            delivery=str(params.get("voxcpm2_delivery","") or ""),
+            custom_style=str(params.get("voxcpm2_custom_style","") or ""),
+        )
+        if not ok:
+            from videotrans.configure.excepts import VideoTransError
+            raise VideoTransError(err or "VoxCPM2 dubbing failed")
+        return True
