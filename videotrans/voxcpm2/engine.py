@@ -1,11 +1,50 @@
 from __future__ import annotations
-import inspect, multiprocessing as mp, os, queue as pyqueue, random, shutil, subprocess, time, traceback, uuid
+import inspect, multiprocessing as mp, os, queue as pyqueue, random, re, shutil, subprocess, time, traceback, uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 import numpy as np
 import soundfile as sf
 
 DEFAULT_MODEL_ID="openbmb/VoxCPM2"
+
+
+def _speakable(text: str) -> bool:
+    return bool(text and any(ch.isalnum() for ch in text))
+
+
+def split_long_text(text: str, max_chars: int = 230):
+    """Unicode/Burmese-safe long-text splitter."""
+    text = re.sub(r"\\r\\n?", "\\n", str(text or "")).strip()
+    if not text:
+        return []
+    max_chars = max(60, int(max_chars))
+    sentence_end = set(".!?。！？…၊။;；:\\n")
+    chunks, buf = [], []
+    def flush():
+        value = "".join(buf).strip()
+        buf.clear()
+        if _speakable(value):
+            chunks.append(value)
+    for ch in text:
+        buf.append(ch)
+        if len(buf) >= max_chars:
+            joined = "".join(buf)
+            cut = -1
+            lower = max(0, len(joined) - max(80, max_chars // 2))
+            for i in range(len(joined)-1, lower-1, -1):
+                if joined[i] in sentence_end or joined[i].isspace():
+                    cut = i + 1
+                    break
+            if 0 < cut < len(joined):
+                left, right = joined[:cut].strip(), joined[cut:]
+                buf.clear(); buf.extend(right)
+                if _speakable(left): chunks.append(left)
+            else:
+                flush()
+        elif ch in sentence_end and len(buf) >= max(45, max_chars // 3):
+            flush()
+    flush()
+    return chunks
 
 def model_path_from_env():
     return os.environ.get("VOXCPM2_MODEL_DIR","").strip() or DEFAULT_MODEL_ID
