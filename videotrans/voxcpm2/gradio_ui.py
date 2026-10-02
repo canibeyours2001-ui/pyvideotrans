@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from videotrans.voxcpm2 import gradio_tools as tools
-from videotrans.webui_media import latest_output, render_edit_room
+from videotrans.webui_media import download_remote_media, latest_output, render_edit_room
 
 
 DELIVERY = [
@@ -234,16 +234,154 @@ def build_video_editor(gr):
 
 
 def build_remote_video_source(gr):
-    source_mode=gr.Radio(["Upload file","Remote upload"],value="Upload file",label="Video source")
-    upload=gr.Video(label="Choose video file",interactive=True)
-    with gr.Column(visible=False) as remote_group:
-        remote_url=gr.Textbox(label="Remote URL",placeholder="YouTube / TikTok / Facebook / X / Drive / MEGA / direct URL")
-        cookie=gr.File(label="Cookies.txt (optional)")
-        with gr.Accordion("Advanced remote headers",open=False):
-            ua=gr.Textbox(label="User-Agent")
-            referer=gr.Textbox(label="Referer")
-    source_mode.change(
-        lambda mode:(gr.update(visible=mode=="Upload file"),gr.update(visible=mode=="Remote upload")),
-        inputs=source_mode,outputs=[upload,remote_group],
+    """Video input with explicit import for remote URLs.
+
+    Remote media is downloaded when the user clicks Import now, not when the
+    translation pipeline starts. The translated job then reuses the imported
+    local file.
+    """
+    source_mode = gr.Radio(
+        ["Upload file", "Remote upload"],
+        value="Upload file",
+        label="Video source",
     )
-    return {"mode":source_mode,"upload":upload,"remote_group":remote_group,"url":remote_url,"cookie":cookie,"ua":ua,"referer":referer}
+
+    upload = gr.Video(
+        label="Choose video file",
+        interactive=True,
+    )
+
+    imported_path = gr.State("")
+    imported_url = gr.State("")
+
+    with gr.Column(visible=False) as remote_group:
+        remote_url = gr.Textbox(
+            label="Remote URL",
+            placeholder="YouTube / TikTok / Facebook / X / Drive / MEGA / direct URL",
+        )
+
+        with gr.Row():
+            import_now = gr.Button(
+                "⬇ Import now",
+                variant="primary",
+            )
+            import_status = gr.Markdown(
+                "Paste a URL, then click **Import now**."
+            )
+
+        remote_preview = gr.Video(
+            label="Imported remote video",
+            interactive=False,
+        )
+
+        cookie = gr.File(
+            label="Cookies.txt (optional)"
+        )
+
+        with gr.Accordion(
+            "Advanced remote headers",
+            open=False,
+        ):
+            ua = gr.Textbox(
+                label="User-Agent"
+            )
+            referer = gr.Textbox(
+                label="Referer"
+            )
+
+    def _switch_source(mode):
+        return (
+            gr.update(
+                visible=mode == "Upload file"
+            ),
+            gr.update(
+                visible=mode == "Remote upload"
+            ),
+        )
+
+    source_mode.change(
+        _switch_source,
+        inputs=source_mode,
+        outputs=[
+            upload,
+            remote_group,
+        ],
+    )
+
+    def _import_remote(
+        url,
+        cookie_file,
+        user_agent,
+        referer_value,
+    ):
+        url = str(
+            url or ""
+        ).strip()
+
+        if not url:
+            raise gr.Error(
+                "Paste a remote URL first."
+            )
+
+        try:
+            local_path = download_remote_media(
+                url,
+                cookie_file=cookie_file,
+                user_agent=str(
+                    user_agent or ""
+                ),
+                referer=str(
+                    referer_value or ""
+                ),
+            )
+
+            local_path = str(
+                Path(local_path).resolve()
+            )
+
+            return (
+                local_path,
+                local_path,
+                url,
+                (
+                    "✅ Imported and ready. "
+                    f"**{Path(local_path).name}** will be used when you click Start."
+                ),
+            )
+
+        except Exception as exc:
+            raise gr.Error(
+                f"Remote import failed: {exc}"
+            )
+
+    import_now.click(
+        _import_remote,
+        inputs=[
+            remote_url,
+            cookie,
+            ua,
+            referer,
+        ],
+        outputs=[
+            remote_preview,
+            imported_path,
+            imported_url,
+            import_status,
+        ],
+    )
+
+    return {
+        "mode": source_mode,
+        "upload": upload,
+        "remote_group": remote_group,
+        "url": remote_url,
+        "cookie": cookie,
+        "ua": ua,
+        "referer": referer,
+        "imported_path": imported_path,
+        "imported_url": imported_url,
+        "import_now": import_now,
+        "import_status": import_status,
+        "remote_preview": remote_preview,
+    }
+
