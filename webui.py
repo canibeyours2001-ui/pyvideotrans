@@ -953,6 +953,8 @@ def build_ui():
                         remote_cookie = source_controls["cookie"]
                         remote_ua = source_controls["ua"]
                         remote_referer = source_controls["referer"]
+                        remote_imported_path = source_controls["imported_path"]
+                        remote_imported_url = source_controls["imported_url"]
 
                         recogn_choice = gr.Dropdown(choices=RECOGN_NAMES, value=RECOGN_NAMES[int(_user_params.get('recogn_type', DEFAULT_RECOGN)) if str(_user_params.get('recogn_type', '')).isdigit() else DEFAULT_RECOGN], label="识别渠道", interactive=True)
                         model_choice = gr.Dropdown(choices=FASTER_MODEL_NAMES, value=_user_params.get('model_name', DEFAULT_MODEL), label="模型", interactive=True)
@@ -1115,26 +1117,42 @@ def build_ui():
                                     subtitle_type_name, remove_noise_val, fix_punc_name,
                                     is_separate_val, embed_bgm_val, loop_bgm_name, backaudio_volume_val,
                                     cuda_val, source_mode_val, remote_url_val, remote_cookie_val,
-                                    remote_ua_val, remote_referer_val, voxcpm2_cfg_val, voxcpm2_steps_val,
+                                    remote_ua_val, remote_referer_val, remote_imported_path_val,
+                                    remote_imported_url_val, voxcpm2_cfg_val, voxcpm2_steps_val,
                                     voxcpm2_delivery_val, voxcpm2_custom_val):
                     print(f'{file_path=}, {source_mode_val=}')
                     if source_mode_val == "Remote upload":
-                        if not str(remote_url_val or "").strip():
-                            yield "❌ 请粘贴远程视频 URL", None, [], _BTN_IDLE
+                        current_url = str(remote_url_val or "").strip()
+                        imported_url = str(remote_imported_url_val or "").strip()
+                        imported_path = str(remote_imported_path_val or "").strip()
+
+                        if not current_url:
+                            yield "❌ Paste a remote video URL first.", None, [], _BTN_IDLE
                             return
-                        try:
-                            yield "⬇️ 正在下载远程视频…", None, [], _BTN_RUNNING
-                            file_path = download_remote_media(
-                                remote_url_val,
-                                cookie_file=remote_cookie_val,
-                                user_agent=remote_ua_val or "",
-                                referer=remote_referer_val or "",
+
+                        if current_url != imported_url:
+                            yield (
+                                "❌ The remote URL has not been imported yet, or it changed after import. "
+                                "Click 'Import now' first.",
+                                None,
+                                [],
+                                _BTN_IDLE,
                             )
-                        except Exception as e:
-                            yield f"❌ 远程视频下载失败: {e}", None, [], _BTN_IDLE
                             return
+
+                        if not imported_path or not Path(imported_path).is_file():
+                            yield (
+                                "❌ The imported remote file is missing. Click 'Import now' again.",
+                                None,
+                                [],
+                                _BTN_IDLE,
+                            )
+                            return
+
+                        file_path = imported_path
+
                     if not file_path:
-                        yield "❌ 请先选择视频文件或远程 URL", None, [], _BTN_IDLE
+                        yield "❌ Choose an uploaded video or import a remote video first.", None, [], _BTN_IDLE
                         return
                     app_cfg.current_status = 'ing'
                     # 清空上次的日志、预览和输出，显示执行中状态
@@ -1267,6 +1285,7 @@ def build_ui():
                             subtitle_type, remove_noise, fix_punc,
                             is_separate, embed_bgm, loop_bgm, backaudio_volume, cuda_accel,
                             source_mode, remote_url, remote_cookie, remote_ua, remote_referer,
+                            remote_imported_path, remote_imported_url,
                             vox_studio["cfg"], vox_studio["steps"], vox_studio["delivery"], vox_studio["custom"]],
                     outputs=[log_output, video_preview, result_files, start_btn])
 
