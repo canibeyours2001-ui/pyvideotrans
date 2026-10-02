@@ -260,7 +260,7 @@ dependencies = [
     "qwen-tts-pvt",
     "f5-tts",
     "gradio>=6.8.0",
-    "mega.py",
+    "mega-py-v2>=2.1.0",
     "gdown",
     "yt-dlp",
     "voxcpm>=2.0.3",
