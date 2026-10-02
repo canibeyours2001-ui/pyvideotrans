@@ -19,7 +19,9 @@ def saved_voice_choices():
     return [x["name"] for x in rows] or ["No saved voices"]
 
 def role_choices():
-    return list_roles(include_no=True,include_clone=True)
+    # The studio selects saved cloned voices, not the special per-subtitle
+    # "clone" role used by pyVideoTrans's dubbing pipeline.
+    return list_roles(include_no=True,include_clone=False)
 
 def _folder(prefix):
     p=Path(TEMP_DIR)/"voxcpm2_studio"/f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
