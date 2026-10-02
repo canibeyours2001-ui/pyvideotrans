@@ -75,9 +75,9 @@ def build_voxcpm2_studio(gr, visible=False):
                 design_name=gr.Textbox(value="My Burmese Voice",label="Save name")
                 save_design=gr.Button("💾 Save this voice")
             save_design.click(
-                lambda n,p,t: _save_result(gr,tools.save_candidate_voice(n,p,t)),
+                lambda n,p,t: _save_role_result(gr,tools.save_candidate_voice(n,p,t)),
                 inputs=[design_name,candidate_state,design_text],
-                outputs=[live_role,live_role,design_status],
+                outputs=[live_role,design_status],
             )
             design_btn.click(
                 tools.generate_profile_candidate,
@@ -123,9 +123,9 @@ def build_voxcpm2_studio(gr, visible=False):
                 clone_name=gr.Textbox(value="My Cloned Voice",label="Voice name")
                 save_clone=gr.Button("💾 Save clone to library")
             save_clone.click(
-                lambda n,w,t: _save_result(gr,tools.save_clone_voice(n,w,t)),
+                lambda n,w,t: _save_role_result(gr,tools.save_clone_voice(n,w,t)),
                 inputs=[clone_name,clone_ref_state,clone_transcript],
-                outputs=[live_role,live_role,clone_status],
+                outputs=[live_role,clone_status],
             )
 
         with gr.Tab("💾 Library"):
@@ -155,9 +155,9 @@ def build_voxcpm2_studio(gr, visible=False):
     }
 
 
-def _save_result(gr,result):
-    choices,selected,status=result
-    return gr.update(choices=choices,value=selected),gr.update(choices=tools.role_choices(),value=selected),status
+def _save_role_result(gr,result):
+    _choices,selected,status=result
+    return gr.update(choices=tools.role_choices(),value=selected),status
 
 
 def _refresh_result(gr):
