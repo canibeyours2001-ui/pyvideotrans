@@ -39,6 +39,8 @@ from videotrans import recognition, translator, tts
 from videotrans.util import tools
 from videotrans.util.gpus import getset_gpu
 from videotrans.util.help_role import role_menu
+from videotrans.voxcpm2.gradio_ui import build_voxcpm2_studio, build_video_editor, build_remote_video_source, delivery_instruction
+from videotrans.webui_media import download_remote_media
 
 # ---------------------------------------------------------------------------
 # params / settings 持久化路径
@@ -99,7 +101,7 @@ SELECTABLE_RECOGN = {0, 1, 2, 3, 4}
 DEFAULT_RECOGN = 0
 SELECTABLE_TRANSLATE = {0, 1, 2}
 DEFAULT_TRANSLATE = 0
-SELECTABLE_TTS = {0, 1, 3, 4, 5, 6, 7, 31}
+SELECTABLE_TTS = {0, 1, 3, 4, 5, 6, 7, 31, tts.VOXCPM2_BUILTIN_TTS}
 DEFAULT_TTS = 0
 
 FASTER_MODEL_NAMES = list(FASTER_MODELS_DICT.keys())
@@ -944,7 +946,13 @@ def build_ui():
 
                 with gr.Row():
                     with gr.Column(scale=3):
-                        input_file = gr.Video(label="选择视频文件", interactive=True)
+                        source_controls = build_remote_video_source(gr)
+                        input_file = source_controls["upload"]
+                        source_mode = source_controls["mode"]
+                        remote_url = source_controls["url"]
+                        remote_cookie = source_controls["cookie"]
+                        remote_ua = source_controls["ua"]
+                        remote_referer = source_controls["referer"]
 
                         recogn_choice = gr.Dropdown(choices=RECOGN_NAMES, value=RECOGN_NAMES[int(_user_params.get('recogn_type', DEFAULT_RECOGN)) if str(_user_params.get('recogn_type', '')).isdigit() else DEFAULT_RECOGN], label="识别渠道", interactive=True)
                         model_choice = gr.Dropdown(choices=FASTER_MODEL_NAMES, value=_user_params.get('model_name', DEFAULT_MODEL), label="模型", interactive=True)
@@ -988,6 +996,9 @@ def build_ui():
                             with gr.Row():
                                 loop_bgm = gr.Dropdown(choices=list(LOOP_BGM_OPTIONS.keys()), value="背景音截断", label="背景音处理", interactive=True)
                                 backaudio_volume = gr.Slider(minimum=0.0, maximum=2.0, value=float(_user_params.get("backaudio_volume", settings.get("backaudio_volume", 0.8))), step=0.1, label="背景音量")
+
+                        _vox_initial = _init_tts_idx == tts.VOXCPM2_BUILTIN_TTS
+                        vox_studio = build_voxcpm2_studio(gr, visible=_vox_initial)
 
                         cuda_accel = gr.Checkbox(label="启用 CUDA 加速", value=False)
                         channel_warning = gr.Markdown("", visible=False)
@@ -1065,14 +1076,28 @@ def build_ui():
                             roles = ["No"]
                     except Exception:
                         roles = ["No"]
-                    return choice, gr.update(choices=roles, value=roles[0] if roles else "No"), warning
+                    return (
+                        choice,
+                        gr.update(choices=roles, value=roles[0] if roles else "No"),
+                        warning,
+                        gr.update(visible=tts_idx == tts.VOXCPM2_BUILTIN_TTS),
+                    )
 
                 recogn_choice.change(fn=validate_recogn, inputs=[recogn_choice, prev_recogn], outputs=[recogn_choice, channel_warning, model_choice])
                 translate_choice.change(fn=validate_translate, inputs=[translate_choice, prev_translate], outputs=[translate_choice, channel_warning])
-                tts_choice.change(fn=tts_change_handler, inputs=[tts_choice, prev_tts, target_lang], outputs=[tts_choice, voice_role, channel_warning])
+                tts_choice.change(
+                    fn=tts_change_handler,
+                    inputs=[tts_choice, prev_tts, target_lang],
+                    outputs=[tts_choice, voice_role, channel_warning, vox_studio["panel"]],
+                )
 
                 def update_voice_roles(tts_display, target_display):
                     tts_idx = _tts_index_from_display(tts_display)
+                    if tts_idx == tts.VOXCPM2_BUILTIN_TTS:
+                        params["voxcpm2_cfg"] = float(voxcpm2_cfg_val)
+                        params["voxcpm2_steps"] = int(voxcpm2_steps_val)
+                        params["voxcpm2_delivery"] = delivery_instruction(voxcpm2_delivery_val)
+                        params["voxcpm2_custom_style"] = str(voxcpm2_custom_val or "")
                     lang_code = _lang_code_from_display(target_display)
                     try:
                         roles = role_menu(tts_idx, langcode=lang_code)
@@ -1094,10 +1119,27 @@ def build_ui():
                                     voice_rate_val, volume_rate_val, pitch_rate_val,
                                     subtitle_type_name, remove_noise_val, fix_punc_name,
                                     is_separate_val, embed_bgm_val, loop_bgm_name, backaudio_volume_val,
-                                    cuda_val):
-                    print(f'{file_path=}')
+                                    cuda_val, source_mode_val, remote_url_val, remote_cookie_val,
+                                    remote_ua_val, remote_referer_val, voxcpm2_cfg_val, voxcpm2_steps_val,
+                                    voxcpm2_delivery_val, voxcpm2_custom_val):
+                    print(f'{file_path=}, {source_mode_val=}')
+                    if source_mode_val == "Remote upload":
+                        if not str(remote_url_val or "").strip():
+                            yield "❌ 请粘贴远程视频 URL", None, [], _BTN_IDLE
+                            return
+                        try:
+                            yield "⬇️ 正在下载远程视频…", None, [], _BTN_RUNNING
+                            file_path = download_remote_media(
+                                remote_url_val,
+                                cookie_file=remote_cookie_val,
+                                user_agent=remote_ua_val or "",
+                                referer=remote_referer_val or "",
+                            )
+                        except Exception as e:
+                            yield f"❌ 远程视频下载失败: {e}", None, [], _BTN_IDLE
+                            return
                     if not file_path:
-                        yield "❌ 请先选择一个视频或音频文件", None, [], _BTN_IDLE
+                        yield "❌ 请先选择视频文件或远程 URL", None, [], _BTN_IDLE
                         return
                     app_cfg.current_status = 'ing'
                     # 清空上次的日志、预览和输出，显示执行中状态
@@ -1223,10 +1265,16 @@ def build_ui():
                             source_lang, target_lang, tts_choice, voice_role,
                             voice_autorate, video_autorate, voice_rate, volume_rate, pitch_rate,
                             subtitle_type, remove_noise, fix_punc,
-                            is_separate, embed_bgm, loop_bgm, backaudio_volume, cuda_accel],
+                            is_separate, embed_bgm, loop_bgm, backaudio_volume, cuda_accel,
+                            source_mode, remote_url, remote_cookie, remote_ua, remote_referer,
+                            vox_studio["cfg"], vox_studio["steps"], vox_studio["delivery"], vox_studio["custom"]],
                     outputs=[log_output, video_preview, result_files, start_btn])
 
-            # === Tab 2: 渠道设置 ===
+            # === Post-production room ===
+            with gr.Tab("🎞 视频编辑室", id="editor"):
+                build_video_editor(gr)
+
+            # === Channel settings ===
             with gr.Tab("⚙️ 渠道设置", id="settings"):
                 build_channel_settings()
 
