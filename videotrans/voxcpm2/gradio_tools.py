@@ -60,6 +60,60 @@ def generate_profile_candidate(profile,text,cfg=2.0,steps=10):
     _generate_one(text,out,role=profile,cfg=cfg,steps=steps)
     return str(out),str(out),"Candidate ready. Listen, then save it if you like it."
 
+
+
+def transcribe_clone_reference(reference_wav,language="Burmese / Myanmar"):
+    """Transcribe a clone reference.
+
+    Burmese uses the compact real-world Conformer that performed well in our
+    notebook tests. Other languages use pyVideoTrans's installed faster-whisper
+    large-v3.
+    """
+    if not reference_wav or not Path(reference_wav).is_file():
+        raise ValueError("Prepare a clone reference first.")
+    if str(language).lower().startswith(("burmese","myanmar","my")):
+        import importlib.util, re, sys, unicodedata
+        from huggingface_hub import snapshot_download
+        repo=snapshot_download(
+            repo_id="freococo/myanmar_asr",token=False,
+            allow_patterns=["model.safetensors","model.py","transcribe.py","config.json","vocab.json","cmvn.json","preprocessor_config.json"],
+        )
+        repo_path=Path(repo)
+        if str(repo_path) not in sys.path: sys.path.insert(0,str(repo_path))
+        # The published transcribe.py imports its sibling model.py as "model".
+        spec=importlib.util.spec_from_file_location("model",str(repo_path/"model.py"))
+        module=importlib.util.module_from_spec(spec); sys.modules["model"]=module; spec.loader.exec_module(module)
+        tspec=importlib.util.spec_from_file_location("voxcpm2_burmese_asr",str(repo_path/"transcribe.py"))
+        tm=importlib.util.module_from_spec(tspec); tspec.loader.exec_module(tm)
+        try:
+            import torch
+            device="cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device="cpu"
+        asr=tm.BurmeseASR(model_dir=str(repo_path),device=device)
+        raw=asr.transcribe(str(reference_wav))
+        if isinstance(raw,dict): raw=raw.get("text") or raw.get("transcript") or ""
+        text=unicodedata.normalize("NFC",str(raw or "").strip())
+        myanmar=r"\u1000-\u109F\uA9E0-\uA9FF\uAA60-\uAA7F"
+        for _ in range(4):
+            text=re.sub(rf"(?<=[{myanmar}])\s+(?=[{myanmar}])","",text)
+        return text,"Burmese real-world ASR transcript ready. Correct names/slang before saving."
+    from faster_whisper import WhisperModel
+    code={"English":"en","Thai":"th","Japanese":"ja","Chinese":"zh"}.get(str(language))
+    device="cuda" if _cuda_available() else "cpu"
+    model=WhisperModel("large-v3",device=device,compute_type="float16" if device=="cuda" else "int8")
+    segments,_=model.transcribe(str(reference_wav),language=code,beam_size=5,vad_filter=True)
+    text=" ".join(s.text.strip() for s in segments if s.text.strip()).strip()
+    return text,"Whisper large-v3 transcript ready."
+
+
+def _cuda_available():
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
 def test_clone_voice(reference_wav,reference_text,test_text,cfg=2.0,steps=10):
     if not reference_wav or not Path(reference_wav).is_file(): raise ValueError("Prepare a clone reference first.")
     if not str(reference_text or "").strip(): raise ValueError("Reference transcript is required.")
