@@ -67,12 +67,12 @@ def _set_env():
     os.environ['PYTHONUTF8'] = '1'
     os.environ['QT_API'] = 'pyside6'
     os.environ['SOFT_NAME'] = 'pyvideotrans'
-    os.environ['MODELSCOPE_CACHE'] = ROOT_DIR + "/models"
-    os.environ['HF_HOME'] = ROOT_DIR + "/models"
-    os.environ['PYANNOTE_CACHE'] = ROOT_DIR + "/models"
-    os.environ['PKUSEG_HOME'] = ROOT_DIR + "/models/pkuser_home"
-    os.environ['HF_HUB_CACHE'] = ROOT_DIR + "/models"
-    os.environ['HF_TOKEN_PATH'] = ROOT_DIR + "/models/hf_token.txt"
+    os.environ.setdefault('MODELSCOPE_CACHE', ROOT_DIR + "/models")
+    os.environ.setdefault('HF_HOME', ROOT_DIR + "/models")
+    os.environ.setdefault('PYANNOTE_CACHE', ROOT_DIR + "/models")
+    os.environ.setdefault('PKUSEG_HOME', ROOT_DIR + "/models/pkuser_home")
+    os.environ.setdefault('HF_HUB_CACHE', ROOT_DIR + "/models")
+    os.environ.setdefault('HF_TOKEN_PATH', ROOT_DIR + "/models/hf_token.txt")
     os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = 'true'
     os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = "120"
     os.environ['HF_HUB_ETAG_TIMEOUT'] = "120"
