@@ -110,7 +110,18 @@ def build_voxcpm2_studio(gr, visible=False):
                 inputs=[clone_source,clone_upload,clone_url,clone_cookie,clone_ua,clone_referer,clone_max,clone_denoise],
                 outputs=[clone_ref_audio,clone_ref_state,clone_status],
             )
-            clone_transcript=gr.Textbox(lines=4,label="Reference transcript",placeholder="Paste/correct exactly what the speaker says")
+            with gr.Row():
+                clone_language=gr.Dropdown(
+                    ["Burmese / Myanmar","English","Thai","Chinese","Japanese"],
+                    value="Burmese / Myanmar",label="Reference language"
+                )
+                transcribe_clone=gr.Button("📝 Transcribe reference")
+            clone_transcript=gr.Textbox(lines=4,label="Reference transcript",placeholder="Automatic transcript appears here; correct names/slang before saving")
+            transcribe_clone.click(
+                tools.transcribe_clone_reference,
+                inputs=[clone_ref_state,clone_language],
+                outputs=[clone_transcript,clone_status],
+            )
             clone_test_text=gr.Textbox(lines=3,label="Test cloned voice",value="မင်္ဂလာပါ။ ဒီအသံကို clone လုပ်ပြီး စမ်းသပ်နေပါတယ်။")
             test_clone=gr.Button("▶ Test cloned voice")
             clone_test_audio=gr.Audio(label="Clone test")
