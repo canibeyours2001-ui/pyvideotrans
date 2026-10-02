@@ -115,6 +115,14 @@ jobs:
           print("Headless webui import + Gradio UI build passed")
           PY
 
+      - name: Kaggle launcher self-test
+        env:
+          PYVIDEOTRANS_LANG: en_US
+          HF_HOME: /tmp/hf
+          HF_HUB_CACHE: /tmp/hf/hub
+        run: |
+          python kaggle_launcher.py --self-test
+
       - name: Compile Gradio integration modules
         run: |
           python -m py_compile             webui.py             videotrans/voxcpm2/engine.py             videotrans/voxcpm2/library.py             videotrans/voxcpm2/gradio_tools.py             videotrans/voxcpm2/gradio_ui.py             videotrans/process/voxcpm2_tts.py             videotrans/tts/_voxcpm2builtin.py             videotrans/configure/signal_hub.py             videotrans/configure/_i18n.py             videotrans/task/simple_runnable_qt.py
