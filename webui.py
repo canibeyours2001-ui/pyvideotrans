@@ -49,7 +49,7 @@ SETTINGS_JSON = Path(ROOT_DIR) / "videotrans" / "cfg.json"
 
 
 def _load_params() -> dict:
-    """从 params.json 加载"""
+    """Load from params.json"""
     try:
         if PARAMS_JSON.exists():
             return json.loads(PARAMS_JSON.read_text(encoding="utf-8"))
@@ -59,7 +59,7 @@ def _load_params() -> dict:
 
 
 def _save_params(data: dict):
-    """保存到 params.json"""
+    """Save to params.json"""
     PARAMS_JSON.parent.mkdir(parents=True, exist_ok=True)
     PARAMS_JSON.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
     # 同步更新内存中的 params
@@ -110,7 +110,7 @@ LANG_DISPLAY_NAMES = list(LANGNAME_DICT.values())
 DEFAULT_SOURCE_LANG = LANG_DISPLAY_NAMES[0]
 DEFAULT_TARGET_LANG = '-'
 
-SUBTITLE_TYPES = {"Do not embed subtitles": 0, "Burn hard subtitles": 1, "Embed soft subtitles": 2, "Burn hard subtitles(双语)": 3, "Embed soft subtitles(双语)": 4}
+SUBTITLE_TYPES = {"Do not embed subtitles": 0, "Burn hard subtitles": 1, "Embed soft subtitles": 2, "Burn bilingual hard subtitles": 3, "Embed bilingual soft subtitles": 4}
 DEFAULT_SUBTITLE_TYPE = "Burn hard subtitles"
 PUNC_OPTIONS = {"Keep punctuation": 0, "Restore punctuation": 1, "Remove punctuation": 2}
 LOOP_BGM_OPTIONS = {"Trim background audio": 0, "Loop background audio": 1}
@@ -207,7 +207,7 @@ def _format_pitch(v):
 
 
 def _safe_get(key, default=""):
-    """从 _user_params 读取值，支持 str/int/float/bool"""
+    """Read a value from _user_params; supports str/int/float/bool"""
     v = _user_params.get(key, default)
     if v is None:
         return default
@@ -225,14 +225,14 @@ CHANNEL_SETTINGS = {
             {"key": "chatgpt_api", "label": "API URL", "type": "text", "default": "", "placeholder": "Leave blank to use the official API"},
             {"key": "chatgpt_key", "label": "API key", "type": "text", "default": "", "placeholder": "API Key"},
             {"key": "chatgpt_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
-            {"key": "chatgpt_model", "label": "Model", "type": "text", "default": "gpt-4o-mini", "placeholder": "输入Model名称"},
+            {"key": "chatgpt_model", "label": "Model", "type": "text", "default": "gpt-4o-mini", "placeholder": "Enter model name"},
         ],
     },
     "DeepSeek Translation": {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "deepseek_key", "label": "API key", "type": "text", "default": "", "placeholder": "API Key"},
-            {"key": "deepseek_model", "label": "Model", "type": "text", "default": "deepseek-chat", "placeholder": "输入Model名称"},
+            {"key": "deepseek_model", "label": "Model", "type": "text", "default": "deepseek-chat", "placeholder": "Enter model name"},
             {"key": "deepseek_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -240,7 +240,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "gemini_key", "label": "Gemini Key", "type": "text", "default": ""},
-            {"key": "gemini_model", "label": "Model", "type": "text", "default": "gemini-2.5-flash", "placeholder": "输入Model名称"},
+            {"key": "gemini_model", "label": "Model", "type": "text", "default": "gemini-2.5-flash", "placeholder": "Enter model name"},
             {"key": "gemini_maxtoken", "label": "Max tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -249,7 +249,7 @@ CHANNEL_SETTINGS = {
         "fields": [
             {"key": "azure_api", "label": "API URL", "type": "text", "default": ""},
             {"key": "azure_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "azure_model", "label": "Model", "type": "text", "default": "gpt-4o-mini", "placeholder": "输入Model名称"},
+            {"key": "azure_model", "label": "Model", "type": "text", "default": "gpt-4o-mini", "placeholder": "Enter model name"},
         ],
     },
     "Local LLM": {
@@ -258,7 +258,7 @@ CHANNEL_SETTINGS = {
             {"key": "localllm_api", "label": "API URL", "type": "text", "default": "http://127.0.0.1:11434/v1", "placeholder": "Example: http://127.0.0.1:11434/v1"},
             {"key": "localllm_key", "label": "API key", "type": "text", "default": "no-key", "placeholder": "Usually use no-key"},
             {"key": "localllm_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
-            {"key": "localllm_model", "label": "Model", "type": "text", "default": "", "placeholder": "输入Model名称"},
+            {"key": "localllm_model", "label": "Model", "type": "text", "default": "", "placeholder": "Enter model name"},
         ],
     },
     "DeepL Translation": {
@@ -287,8 +287,8 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "qwenmt_key", "label": "Bailian API key", "type": "text", "default": ""},
-            {"key": "qwenmt_model", "label": "翻译Model", "type": "text", "default": "qwen-mt-plus", "placeholder": "Must start with qwen-mt"},
-            {"key": "qwenmt_asr_model", "label": "语音识别Model", "type": "text", "default": "qwen3-asr-flash", "placeholder": "Must start with qwen3-asr"},
+            {"key": "qwenmt_model", "label": "Translation model", "type": "text", "default": "qwen-mt-plus", "placeholder": "Must start with qwen-mt"},
+            {"key": "qwenmt_asr_model", "label": "Speech recognition model", "type": "text", "default": "qwen3-asr-flash", "placeholder": "Must start with qwen3-asr"},
         ],
     },
     "VolcEngine": {
@@ -303,7 +303,7 @@ CHANNEL_SETTINGS = {
         "fields": [
             {"key": "minimax_key", "label": "API key", "type": "text", "default": ""},
             {"key": "minimax_api", "label": "API URL", "type": "text", "default": "api.minimax.io"},
-            {"key": "minimax_model", "label": "Model", "type": "text", "default": "MiniMax-M3", "placeholder": "输入Model名称"},
+            {"key": "minimax_model", "label": "Model", "type": "text", "default": "MiniMax-M3", "placeholder": "Enter model name"},
             {"key": "minimax_max_tokens", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -311,7 +311,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "zhipu_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "zhipu_model", "label": "Model", "type": "text", "default": "glm-4-flash", "placeholder": "输入Model名称"},
+            {"key": "zhipu_model", "label": "Model", "type": "text", "default": "glm-4-flash", "placeholder": "Enter model name"},
             {"key": "zhipu_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -319,7 +319,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "guiji_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "guiji_model", "label": "Model", "type": "text", "default": "Qwen/Qwen3-32B", "placeholder": "输入Model名称"},
+            {"key": "guiji_model", "label": "Model", "type": "text", "default": "Qwen/Qwen3-32B", "placeholder": "Enter model name"},
             {"key": "guiji_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -327,7 +327,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "openrouter_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "openrouter_model", "label": "Model", "type": "text", "default": "", "placeholder": "输入Model名称"},
+            {"key": "openrouter_model", "label": "Model", "type": "text", "default": "", "placeholder": "Enter model name"},
             {"key": "openrouter_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -335,7 +335,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "api_route_key", "label": "API Key", "type": "text", "default": ""},
-            {"key": "api_route_model", "label": "Model", "type": "text", "default": "gpt-5.4-mini", "placeholder": "输入Model名称"},
+            {"key": "api_route_model", "label": "Model", "type": "text", "default": "gpt-5.4-mini", "placeholder": "Enter model name"},
             {"key": "api_route_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -343,7 +343,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "cheaperinference_key", "label": "API Key", "type": "text", "default": ""},
-            {"key": "cheaperinference_model", "label": "Model", "type": "text", "default": "gpt-5.4-mini", "placeholder": "输入Model名称"},
+            {"key": "cheaperinference_model", "label": "Model", "type": "text", "default": "gpt-5.4-mini", "placeholder": "Enter model name"},
             {"key": "cheaperinference_max_token", "label": "Max output tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -351,7 +351,7 @@ CHANNEL_SETTINGS = {
         "category": "Subtitle translation providers",
         "fields": [
             {"key": "xiaomi_key", "label": "Xiaomi key", "type": "text", "default": ""},
-            {"key": "xiaomi_model", "label": "Model", "type": "text", "default": "mimo-v2.5-pro", "placeholder": "输入Model名称"},
+            {"key": "xiaomi_model", "label": "Model", "type": "text", "default": "mimo-v2.5-pro", "placeholder": "Enter model name"},
             {"key": "xiaomi_maxtoken", "label": "Max tokens", "type": "text", "default": "8192"},
         ],
     },
@@ -362,7 +362,7 @@ CHANNEL_SETTINGS = {
         "fields": [
             {"key": "openairecognapi_url", "label": "API URL", "type": "text", "default": "", "placeholder": "Leave blank to use the official API"},
             {"key": "openairecognapi_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "openairecognapi_model", "label": "Model", "type": "text", "default": "whisper-1", "placeholder": "输入Model名称"},
+            {"key": "openairecognapi_model", "label": "Model", "type": "text", "default": "whisper-1", "placeholder": "Enter model name"},
         ],
     },
     "Deepgram ASR": {
@@ -391,7 +391,7 @@ CHANNEL_SETTINGS = {
         "fields": [
             {"key": "openaitts_api", "label": "API URL", "type": "text", "default": "", "placeholder": "Leave blank to use the official API"},
             {"key": "openaitts_key", "label": "API key", "type": "text", "default": ""},
-            {"key": "openaitts_model", "label": "Model", "type": "text", "default": "tts-1", "placeholder": "输入Model名称"},
+            {"key": "openaitts_model", "label": "Model", "type": "text", "default": "tts-1", "placeholder": "Enter model name"},
         ],
     },
     "Azure TTS": {
@@ -433,7 +433,7 @@ CHANNEL_SETTINGS = {
         "category": "Text-to-speech",
         "fields": [
             {"key": "qwentts_key", "label": "Bailian API key", "type": "text", "default": ""},
-            {"key": "qwentts_model", "label": "Model", "type": "text", "default": "qwen3-tts-flash", "placeholder": "输入Model名称"},
+            {"key": "qwentts_model", "label": "Model", "type": "text", "default": "qwen3-tts-flash", "placeholder": "Enter model name"},
         ],
     },
     "Qwen-TTS Local": {
@@ -462,7 +462,7 @@ CHANNEL_SETTINGS = {
             {"key": "xaitts_key", "label": "API key", "type": "text", "default": ""},
         ],
     },
-    "小米 TTS": {
+    "Xiaomi TTS": {
         "category": "Text-to-speech",
         "fields": [
             {"key": "xiaomi_key", "label": "Xiaomi key", "type": "text", "default": ""},
@@ -480,7 +480,7 @@ def build_ass_editor():
     style = _load_ass_style()
 
     with gr.Accordion("🎨 Hard Subtitle Style", open=False):
-        gr.Markdown("修改后点击「保存样式」，样式将应用于所有Burn hard subtitles的任务。")
+        gr.Markdown("After making changes, click Save Style. The style applies to all hard-subtitle jobs.")
         with gr.Tabs():
             with gr.Tab("Primary subtitles"):
                 with gr.Row():
@@ -509,7 +509,7 @@ def build_ass_editor():
             with gr.Tab("Global style"):
                 with gr.Row():
                     ass_border_style = gr.Dropdown(label="Border style", choices=["Outline", "Opaque background"], value="Outline" if style.get('BorderStyle', 1) == 1 else "Opaque background")
-                    ass_outline = gr.Slider(label="Outline粗细", minimum=0.0, maximum=10.0, value=style.get('Outline', 0.5), step=0.1)
+                    ass_outline = gr.Slider(label="Outline width", minimum=0.0, maximum=10.0, value=style.get('Outline', 0.5), step=0.1)
                     ass_shadow = gr.Slider(label="Shadow", minimum=0.0, maximum=10.0, value=style.get('Shadow', 0.5), step=0.1)
                 with gr.Row():
                     ass_scale_x = gr.Slider(label="Horizontal scale %", minimum=1, maximum=1000, value=style.get('ScaleX', 100), step=1)
@@ -583,7 +583,7 @@ def build_ass_editor():
 # 渠道设置面板构建
 # ---------------------------------------------------------------------------
 def build_channel_settings():
-    """构建所有渠道设置面板"""
+    """Build all provider settings panels"""
     import gradio as gr
 
     # 按 category 分组
@@ -595,7 +595,7 @@ def build_channel_settings():
         categories[cat].append((name, cfg))
 
     gr.Markdown("### Provider Settings")
-    gr.Markdown("配置各渠道的 API 地址、API key等信息。**保存后与桌面版 (sp.exe) 通用**，配置文件存储在 `videotrans/params.json` 中。")
+    gr.Markdown("Configure provider API URLs, API keys, and related settings. Saved values are shared with the desktop app and stored in `videotrans/params.json`.")
 
     with gr.Tabs():
         for cat_name, channels in categories.items():
@@ -650,7 +650,7 @@ def build_channel_settings():
                 interactive=True,
             )
 
-            ref_audio_save = gr.Button("💾 Save参考音频", variant="primary")
+            ref_audio_save = gr.Button("💾 Save Reference Audio", variant="primary")
             ref_audio_status = gr.Markdown("", visible=False)
 
             def save_ref_audio(text):
@@ -730,7 +730,7 @@ _all_widgets = {}
 
 
 def _w(key, label, tip="", area=False):
-    """创建一个设置项：标题在上，组件在下"""
+    """Create one settings item with a title above the control"""
     import gradio as gr
     val = str(_user_settings.get(key, ""))
     with gr.Column():
@@ -748,7 +748,7 @@ def _w(key, label, tip="", area=False):
 
 
 def _save_section(section_key, keys):
-    """为指定分区创建保存按钮和Status显示"""
+    """Create a save button and status output for a section"""
     import gradio as gr
     with gr.Row():
         save_btn = gr.Button(f"💾 Save {ADVANCED_SECTION_TITLES.get(section_key, section_key)}", variant="primary", size="sm")
@@ -772,7 +772,7 @@ def _save_section(section_key, keys):
 ADVANCED_SECTION_TITLES = {
     "common": "General Settings", "video": "Video Output", "whisper": "Speech Recognition",
     "trans": "Subtitle Translation", "dubbing": "Dubbing",
-    "justify": "Subtitle / Audio / Video Alignment", "prompt_init": "WhisperModel提示词",
+    "justify": "Subtitle / Audio / Video Alignment", "prompt_init": "Whisper prompts",
 }
 
 
@@ -823,7 +823,7 @@ def build_advanced_settings():
         with gr.Row():
             _w("vad_type", "VAD", "tenvad/silero")
             _w("threshold", "Speech threshold", "")
-            _w("no_speech_threshold", "非Speech threshold", "")
+            _w("no_speech_threshold", "No-speech threshold", "")
         with gr.Row():
             _w("max_speech_duration_s", "Maximum speech duration (s)", "")
             _w("min_speech_duration_ms", "Minimum speech duration (ms)", "")
@@ -834,7 +834,7 @@ def build_advanced_settings():
             _w("merge_short_sub", "Merge very short subtitles", "")
         with gr.Row():
             _w("whisper_prepare", "Whisper pre-segmentation?", "Enable for clone dubbing")
-            _w("speaker_type", "说话人分离Model", "Built-in / pyannote")
+            _w("speaker_type", "Speaker diarization model", "Built-in / pyannote")
             _w("hf_token", "Hugging Face token", "Required by pyannote")
         with gr.Row():
             _w("cuda_com_type", "Compute type", "int8/float16/float32")
@@ -843,7 +843,7 @@ def build_advanced_settings():
         with gr.Row():
             _w("condition_on_previous_text", "Condition on previous text", "")
             _w("repetition_penalty", "Repetition penalty", "")
-            _w("compression_ratio_threshold", "文本Encoding preset", "")
+            _w("compression_ratio_threshold", "Text compression ratio", "")
         with gr.Row():
             _w("temperature", "Sampling temperature", "")
             _w("hotwords", "Hotwords", "Comma-separated")
@@ -875,7 +875,7 @@ def build_advanced_settings():
         with gr.Row():
             _w("translation_wait", "Pause after translation (s)", "")
             _w("aisendsrt", "Send complete subtitles", "")
-            _w("aitrans_context", "Translate all lines in one request", "需超长上下文Model")
+            _w("aitrans_context", "Translate all lines in one request", "Requires a long-context model")
         _save_section("trans", ["trans_thread", "aitrans_thread", "aitrans_temperature",
                                  "translation_wait", "aisendsrt", "aitrans_context"])
 
@@ -894,7 +894,7 @@ def build_advanced_settings():
             _w("edgetts_retry_nums", "EdgeTTS retries", "")
             _w("noise_separate_nums", "Vocal separation workers", "")
         with gr.Row():
-            _w("uvr_models", "分离背景声Model", "")
+            _w("uvr_models", "Background separation model", "")
         _save_section("dubbing", ["dubbing_thread", "dubbing_wait", "remove_dubb_silence",
                                    "save_segment_audio", "normal_text", "chattts_voice",
                                    "edgetts_max_concurrent_tasks", "edgetts_retry_nums",
@@ -910,8 +910,8 @@ def build_advanced_settings():
             _w("other_len", "Other-language characters per subtitle line", "")
         _save_section("justify", ["max_audio_speed_rate", "max_video_pts_rate", "cjk_len", "other_len"])
 
-    # ---- WhisperModel提示词 ----
-    with gr.Accordion("📋 WhisperModel提示词", open=False):
+    # ---- Whisper prompts ----
+    with gr.Accordion("📋 Whisper prompts", open=False):
         for i in range(0, len(_prompt_keys_list), 3):
             with gr.Row():
                 for k in _prompt_keys_list[i:i+3]:
