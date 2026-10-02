@@ -1314,12 +1314,12 @@ if __name__ == "__main__":
         args = parser.parse_args()
         app = build_ui()
         app.launch(server_name=args.host, server_port=args.port, share=args.share, inbrowser=False, theme=gr.themes.Soft(),css="""
-        /* 默认字体：微软雅黑 > 苹果方黑 > 系统无衬线字体 */
+        /* Default font stack: Microsoft YaHei > PingFang SC > system sans-serif */
         *, *::before, *::after {
             font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "SimHei", sans-serif !important;
         }
         h1{text-align:center}
-        /* 输入框和按钮的字体也统一 */
+        /* Use the same font stack for form controls */
         input, textarea, select, button, label, .gr-textbox, .gr-dropdown, .gr-checkbox {
             font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "SimHei", sans-serif !important;
         }
