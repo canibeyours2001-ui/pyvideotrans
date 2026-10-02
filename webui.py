@@ -1093,11 +1093,6 @@ def build_ui():
 
                 def update_voice_roles(tts_display, target_display):
                     tts_idx = _tts_index_from_display(tts_display)
-                    if tts_idx == tts.VOXCPM2_BUILTIN_TTS:
-                        params["voxcpm2_cfg"] = float(voxcpm2_cfg_val)
-                        params["voxcpm2_steps"] = int(voxcpm2_steps_val)
-                        params["voxcpm2_delivery"] = delivery_instruction(voxcpm2_delivery_val)
-                        params["voxcpm2_custom_style"] = str(voxcpm2_custom_val or "")
                     lang_code = _lang_code_from_display(target_display)
                     try:
                         roles = role_menu(tts_idx, langcode=lang_code)
@@ -1153,6 +1148,11 @@ def build_ui():
                     recogn_idx = _recogn_index_from_display(recogn_display)
                     translate_idx = _translate_index_from_display(translate_display)
                     tts_idx = _tts_index_from_display(tts_display)
+                    if tts_idx == tts.VOXCPM2_BUILTIN_TTS:
+                        params["voxcpm2_cfg"] = float(voxcpm2_cfg_val)
+                        params["voxcpm2_steps"] = int(voxcpm2_steps_val)
+                        params["voxcpm2_delivery"] = delivery_instruction(voxcpm2_delivery_val)
+                        params["voxcpm2_custom_style"] = str(voxcpm2_custom_val or "")
                     source_code = _lang_code_from_display(source_display)
                     target_code = _lang_code_from_display(target_display)
                     subtitle_val = SUBTITLE_TYPES.get(subtitle_type_name, 1)
