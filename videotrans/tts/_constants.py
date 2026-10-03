@@ -63,6 +63,9 @@ TTS_API = 35
 SILICONFLOW_API = 36
 OPENROUTER_API = 37
 
+# Local built-in VoxCPM2 (our dual-GPU architecture)
+VOXCPM2_BUILTIN_TTS = 38
+
 # 支持克隆的渠道，即存在 clone 配音角色
 SUPPORT_CLONE = [
     COSYVOICE_TTS,
@@ -80,7 +83,8 @@ SUPPORT_CLONE = [
     MOSS_TTS,
     CONFUCIUS_TTS,
     FIRERED3_TTS,
-    ZIPVOICE_TTS
+    ZIPVOICE_TTS,
+    VOXCPM2_BUILTIN_TTS
 ]
 # 本地内置，在单视频模式下 校对配音时，对 is_redubb 特殊处理
 LOCAL_BUILTIN = [
@@ -94,7 +98,8 @@ LOCAL_BUILTIN = [
     PIPER_TTS,
     CHATTERBOX_TTS,
     Supertonic_TTS,
-    VITSCNEN_TTS
+    VITSCNEN_TTS,
+    VOXCPM2_BUILTIN_TTS
 ]
 
 # 配音角色根据语言不同而变化的渠道
@@ -153,6 +158,7 @@ ID_NAME_DICT = {
     TTS_API: ChannelProvider(tr("Customize API"), imp="._ttsapi", key_name="ttsapi_url", win="ttsapi"),
     SILICONFLOW_API: ChannelProvider(tr("SiliconFlow"), imp="._siliconflow", key_name="guiji_key", win="siliconflow" ),
     OPENROUTER_API: ChannelProvider("OpenRouter", imp="._openrouter", key_name="openrouter_key", win="openrouter" ),
+    VOXCPM2_BUILTIN_TTS: ChannelProvider(f"VoxCPM2({tr('Built-in')})", imp="._voxcpm2builtin"),
 }
 
 # 强制保持按照每个常量值大小排序

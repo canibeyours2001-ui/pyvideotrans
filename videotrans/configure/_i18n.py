@@ -4,7 +4,10 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QLocale
+try:
+    from PySide6.QtCore import QLocale
+except Exception:
+    QLocale = None
 
 from videotrans.configure._paths import ROOT_DIR
 
@@ -45,7 +48,11 @@ def _init_language(settings):
     try:
         _lang = os.environ.get('PYVIDEOTRANS_LANG', settings.lang)
         if not _lang or not SUPPORT_LANG.get(_lang) or not Path(SUPPORT_LANG.get(_lang)).exists():
-            _lang = QLocale.system().name()
+            if QLocale is not None:
+                _lang = QLocale.system().name()
+            else:
+                import locale
+                _lang = (locale.getlocale()[0] or "en_US")
     except Exception:
         _lang = "en_US"
 

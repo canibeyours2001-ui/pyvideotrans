@@ -2,12 +2,65 @@
 # 返回元组
 # 失败：第一个值为False，则为失败，第二个值存储失败原因
 # 成功，第一个值存在需要的返回值，不需要时返回True，第二个值为None
-import json, traceback
+import json, traceback, subprocess
 from pathlib import Path
 from typing import List, Tuple, Union
 
 from videotrans.configure._paths import TEMP_ROOT
 from videotrans.configure.config import logger
+
+
+def _decode_audio_ffmpeg(audio_file, sampling_rate=16000):
+    """Decode media to mono float32 PCM without PyAV.
+
+    faster-whisper normally opens filename inputs through PyAV. Kaggle can
+    contain a PyAV build whose av.open() does not accept the
+    metadata_errors= keyword used by faster-whisper. Passing a NumPy waveform
+    into WhisperModel.transcribe() bypasses PyAV completely.
+    """
+    import numpy as np
+
+    command = [
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-i",
+        str(audio_file),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(int(sampling_rate)),
+        "-f",
+        "f32le",
+        "pipe:1",
+    ]
+
+    process = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    if process.returncode != 0:
+        error = process.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"FFmpeg could not decode the recognition audio: {error}"
+        )
+
+    audio = np.frombuffer(
+        process.stdout,
+        dtype=np.float32,
+    ).copy()
+
+    if audio.size == 0:
+        raise RuntimeError(
+            f"FFmpeg decoded no audio samples from: {audio_file}"
+        )
+
+    return audio
 
 
 
@@ -102,10 +155,26 @@ def faster_whisper(
         else:
             temperature = float(temperature)
 
-        logger.debug(f'直接传递完整音频，由faster-whisper内部VAD处理，返回字级时间戳数据')
-        _write_log(logs_file, json.dumps({"type": "logs", "text": 'Transcribe word timestamps'}))
-        segments, info = model.transcribe(
+        logger.debug(
+            "Decode recognition audio with FFmpeg to avoid PyAV ABI/API "
+            "compatibility problems, then let faster-whisper run VAD and "
+            "word timestamps on the NumPy waveform."
+        )
+        _write_log(
+            logs_file,
+            json.dumps({
+                "type": "logs",
+                "text": "Decode audio with FFmpeg and transcribe word timestamps",
+            }),
+        )
+
+        audio_input = _decode_audio_ffmpeg(
             audio_file,
+            sampling_rate=16000,
+        )
+
+        segments, info = model.transcribe(
+            audio_input,
             beam_size=beam_size,
             best_of=best_of,
             condition_on_previous_text=condition_on_previous_text,

@@ -313,6 +313,10 @@ def get_openrouter_role(model_name):
 def role_menu(tts_type, langcode=None) -> List:
     from videotrans import tts
 
+    if tts_type == tts.VOXCPM2_BUILTIN_TTS:
+        from videotrans.voxcpm2.library import list_roles
+        return list_roles(include_no=True, include_clone=True)
+
     if tts_type == tts.OPENROUTER_API:
         return get_openrouter_role(config.params.get("openrouter_tts_model"))
 
