@@ -84,8 +84,7 @@ def build_voxcpm2_studio(gr, visible=False):
             profile=gr.Dropdown(
                 choices=tools.profile_choices(),
                 value=None,
-                label="Voice profile",
-                placeholder="Choose a profile to audition…",
+                label="Voice profile — choose one to audition",
             )
             design_text=gr.Textbox(
                 lines=4,
