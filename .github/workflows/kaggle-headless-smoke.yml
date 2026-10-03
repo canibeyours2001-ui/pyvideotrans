@@ -7,6 +7,7 @@ on:
       - "webui.py"
       - "videotrans/webui_media.py"
       - "videotrans/process/voxcpm2_tts.py"
+      - "videotrans/process/stt_faster.py"
       - "videotrans/tts/_voxcpm2builtin.py"
       - "videotrans/tts/_constants.py"
       - "videotrans/util/help_role.py"
@@ -105,6 +106,35 @@ jobs:
           PY
           python /tmp/test_voxcpm2_scheduler.py
 
+      - name: Test FFmpeg audio decoder used by faster-whisper
+        env:
+          PYVIDEOTRANS_LANG: en_US
+          HF_HOME: /tmp/hf
+          HF_HUB_CACHE: /tmp/hf/hub
+        run: |
+          ffmpeg -version | head -n 1
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          import soundfile as sf
+
+          from videotrans.process.stt_faster import _decode_audio_ffmpeg
+
+          path = Path(tempfile.mkdtemp()) / "input.wav"
+          sr = 48000
+          t = np.arange(sr // 4, dtype=np.float32) / sr
+          tone = (0.05 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+          sf.write(path, tone, sr)
+
+          audio = _decode_audio_ffmpeg(path, sampling_rate=16000)
+          assert isinstance(audio, np.ndarray)
+          assert audio.dtype == np.float32
+          assert 3900 <= audio.size <= 4100, audio.size
+          assert np.max(np.abs(audio)) > 0
+          print("FFmpeg -> NumPy decoder passed:", audio.shape, audio.dtype)
+          PY
+
       - name: Verify Chinese recognition dependency
         run: |
           python - <<'PY'
@@ -127,6 +157,34 @@ jobs:
                       bad.append(node.value)
           assert not bad, f"Chinese UI string literals remain: {bad[:10]}"
           print("English-only WebUI string-literal check passed")
+          PY
+
+      - name: Test generated voice candidate promotion
+        env:
+          PYVIDEOTRANS_LANG: en_US
+          HF_HOME: /tmp/hf
+          HF_HUB_CACHE: /tmp/hf/hub
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          import soundfile as sf
+
+          from videotrans.voxcpm2.gradio_tools import use_profile_candidate
+
+          path = Path(tempfile.mkdtemp()) / "candidate.wav"
+          sf.write(path, np.zeros(4800, dtype=np.float32), 48000)
+
+          choices, selected, status = use_profile_candidate(
+              "🎙 U Aung — Deep Calm Male",
+              str(path),
+              "မင်္ဂလာပါ",
+          )
+          assert selected in choices
+          assert selected.startswith("Selected • ")
+          assert "Using" in status
+          print("Candidate promotion passed:", selected)
           PY
 
       - name: Import WebUI headlessly without PySide6
