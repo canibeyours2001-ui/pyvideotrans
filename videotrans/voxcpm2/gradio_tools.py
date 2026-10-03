@@ -80,8 +80,11 @@ def _generate_one(text,out,role="No",clone_wav=None,clone_text="",delivery="",cu
     direction=" ".join(x for x in (info.get("direction",""),delivery,custom) if str(x or "").strip()).strip()
     kwargs=make_generation_kwargs(text,reference_wav=info.get("wav"),reference_text=info.get("transcript",""),
                                    control_instruction=direction,cfg_value=cfg,inference_timesteps=steps)
-    service=_get_studio_service()
-    result=next(service.iter_results([{"chunk_index":0,"output_path":str(out),"kwargs":kwargs}]))
+    # A single warm studio worker is shared across UI callbacks. Serialize
+    # auditions so concurrent clicks cannot consume each other's queue results.
+    with _STUDIO_SERVICE_LOCK:
+        service=_get_studio_service()
+        result=next(service.iter_results([{"chunk_index":0,"output_path":str(out),"kwargs":kwargs}]))
     return str(out)
 
 def generate_profile_candidate(profile,text,cfg=2.0,steps=10):
