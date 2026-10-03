@@ -24,8 +24,8 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 # 语言常量
 # ---------------------------------------------------------------------------
-CLI_LANG = "zh"
-os.environ['PYVIDEOTRANS_LANG'] = CLI_LANG
+CLI_LANG = os.environ.get("PYVIDEOTRANS_LANG", "en_US")
+os.environ["PYVIDEOTRANS_LANG"] = CLI_LANG
 
 # ---------------------------------------------------------------------------
 # 初始化 videotrans 环境
@@ -40,6 +40,7 @@ from videotrans.util import tools
 from videotrans.util.gpus import getset_gpu
 from videotrans.util.help_role import role_menu
 from videotrans.voxcpm2.gradio_ui import build_voxcpm2_studio, build_video_editor, build_remote_video_source, delivery_instruction
+from videotrans.voxcpm2 import gradio_tools as voxcpm2_tools
 
 # ---------------------------------------------------------------------------
 # params / settings 持久化路径
@@ -1105,6 +1106,32 @@ def build_ui():
 
                 target_lang.change(fn=update_voice_roles, inputs=[tts_choice, target_lang], outputs=[voice_role])
 
+                def use_generated_voxcpm2_voice(profile_name, candidate_path, transcript):
+                    choices, selected, status = voxcpm2_tools.use_profile_candidate(
+                        profile_name,
+                        candidate_path,
+                        transcript,
+                    )
+                    update = gr.update(
+                        choices=choices,
+                        value=selected,
+                    )
+                    return update, update, status
+
+                vox_studio["use_candidate_btn"].click(
+                    use_generated_voxcpm2_voice,
+                    inputs=[
+                        vox_studio["profile"],
+                        vox_studio["candidate_state"],
+                        vox_studio["design_text"],
+                    ],
+                    outputs=[
+                        voice_role,
+                        vox_studio["live_role"],
+                        vox_studio["design_status"],
+                    ],
+                )
+
                 # 执行翻译
                 _BTN_RUNNING = gr.update(value="⏳ Running...", interactive=False)
                 _BTN_IDLE = gr.update(value="🚀 Start", interactive=True)
@@ -1166,6 +1193,10 @@ def build_ui():
                     translate_idx = _translate_index_from_display(translate_display)
                     tts_idx = _tts_index_from_display(tts_display)
                     if tts_idx == tts.VOXCPM2_BUILTIN_TTS:
+                        # Voice Design keeps one GPU0 model warm for fast auditions.
+                        # Release it before the full translation pipeline loads the
+                        # dual-GPU VoxCPM2 workers.
+                        voxcpm2_tools.release_studio_service()
                         params["voxcpm2_cfg"] = float(voxcpm2_cfg_val)
                         params["voxcpm2_steps"] = int(voxcpm2_steps_val)
                         params["voxcpm2_delivery"] = delivery_instruction(voxcpm2_delivery_val)
