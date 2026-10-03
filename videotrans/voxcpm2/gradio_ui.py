@@ -75,24 +75,60 @@ def build_voxcpm2_studio(gr, visible=False):
             live_stop.click(fn=None,cancels=[live_event])
 
         with gr.Tab("🎭 Voice Design"):
-            profile=gr.Dropdown(choices=tools.profile_choices(),value=tools.profile_choices()[0],label="Voice profile")
-            design_text=gr.Textbox(lines=4,label="Audition text",value="မင်္ဂလာပါ။ ဒီအသံကို စမ်းသပ်နေပါတယ်။")
-            design_btn=gr.Button("🎲 Generate profile candidate")
-            design_audio=gr.Audio(label="Candidate")
-            candidate_state=gr.State("")
-            design_status=gr.Markdown()
-            with gr.Row():
-                design_name=gr.Textbox(value="My Burmese Voice",label="Save name")
-                save_design=gr.Button("💾 Save this voice")
-            save_design.click(
-                lambda n,p,t: _save_role_result(gr,tools.save_candidate_voice(n,p,t)),
-                inputs=[design_name,candidate_state,design_text],
-                outputs=[live_role,design_status],
+            gr.Markdown(
+                "Choose a profile to generate an audition automatically. "
+                "If you do not like the result, click **Try this profile again** "
+                "or choose another profile. When you find a voice you like, "
+                "click **Use this generated voice for video**."
             )
+            profile=gr.Dropdown(
+                choices=tools.profile_choices(),
+                value=None,
+                label="Voice profile",
+                placeholder="Choose a profile to audition…",
+            )
+            design_text=gr.Textbox(
+                lines=4,
+                label="Audition text",
+                value="မင်္ဂလာပါ။ ဒီအသံကို စမ်းသပ်နေပါတယ်။",
+            )
+            with gr.Row():
+                design_btn=gr.Button("🎲 Try this profile again")
+                use_candidate_btn=gr.Button(
+                    "✅ Use this generated voice for video",
+                    variant="primary",
+                )
+            design_audio=gr.Audio(
+                label="Generated voice audition",
+                autoplay=True,
+            )
+            candidate_state=gr.State("")
+            design_status=gr.Markdown(
+                "Select a profile above to generate the first audition."
+            )
+
+            # Selecting a different profile immediately generates its audition.
+            profile.change(
+                tools.generate_profile_candidate,
+                inputs=[profile,design_text,cfg,steps],
+                outputs=[design_audio,candidate_state,design_status],
+            )
+
+            # Explicit retry guarantees a fresh attempt even when the same
+            # profile remains selected.
             design_btn.click(
                 tools.generate_profile_candidate,
                 inputs=[profile,design_text,cfg,steps],
                 outputs=[design_audio,candidate_state,design_status],
+            )
+
+            with gr.Row():
+                design_name=gr.Textbox(value="My Burmese Voice",label="Save name")
+                save_design=gr.Button("💾 Save to voice library")
+            save_design.click(
+                lambda n,p,t: _save_role_result(gr,tools.save_candidate_voice(n,p,t)),
+                inputs=[design_name,candidate_state,design_text],
+                outputs=[live_role,design_status],
             )
 
         with gr.Tab("🧬 Voice Clone"):
@@ -176,6 +212,11 @@ def build_voxcpm2_studio(gr, visible=False):
         "delivery":provider_delivery,
         "custom":provider_custom,
         "live_role":live_role,
+        "profile":profile,
+        "candidate_state":candidate_state,
+        "design_text":design_text,
+        "design_status":design_status,
+        "use_candidate_btn":use_candidate_btn,
     }
 
 
