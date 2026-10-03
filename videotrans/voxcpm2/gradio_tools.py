@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -9,6 +10,35 @@ from videotrans.configure.config import TEMP_DIR
 from videotrans.voxcpm2.engine import DualGPUVoxCPM, apply_speed, concat_wavs, make_generation_kwargs, model_path_from_env, split_long_text
 from videotrans.voxcpm2.library import PROFILES, delete_voice, list_roles, list_saved_voices, resolve_role, save_voice
 from videotrans.webui_media import download_remote_media
+
+
+_STUDIO_SERVICE = None
+_STUDIO_SERVICE_LOCK = threading.RLock()
+
+
+def _get_studio_service():
+    """Keep one GPU0 VoxCPM2 replica warm for auditions/clone tests."""
+    global _STUDIO_SERVICE
+    with _STUDIO_SERVICE_LOCK:
+        if _STUDIO_SERVICE is None:
+            _STUDIO_SERVICE = DualGPUVoxCPM(
+                model_dir=model_path_from_env(),
+                gpu_ids=(0,),
+            )
+        return _STUDIO_SERVICE
+
+
+def release_studio_service():
+    """Release the warm audition model before dual-GPU translation/streaming."""
+    global _STUDIO_SERVICE
+    with _STUDIO_SERVICE_LOCK:
+        service = _STUDIO_SERVICE
+        _STUDIO_SERVICE = None
+    if service is not None:
+        try:
+            service.shutdown()
+        except Exception:
+            pass
 
 
 def profile_choices():
@@ -50,16 +80,43 @@ def _generate_one(text,out,role="No",clone_wav=None,clone_text="",delivery="",cu
     direction=" ".join(x for x in (info.get("direction",""),delivery,custom) if str(x or "").strip()).strip()
     kwargs=make_generation_kwargs(text,reference_wav=info.get("wav"),reference_text=info.get("transcript",""),
                                    control_instruction=direction,cfg_value=cfg,inference_timesteps=steps)
-    with DualGPUVoxCPM(model_dir=model_path_from_env()) as service:
-        result=next(service.iter_results([{"chunk_index":0,"output_path":str(out),"kwargs":kwargs}]))
+    service=_get_studio_service()
+    result=next(service.iter_results([{"chunk_index":0,"output_path":str(out),"kwargs":kwargs}]))
     return str(out)
 
 def generate_profile_candidate(profile,text,cfg=2.0,steps=10):
     if not str(text or "").strip(): raise ValueError("Enter audition text.")
     out=_folder("candidate")/"candidate.wav"
     _generate_one(text,out,role=profile,cfg=cfg,steps=steps)
-    return str(out),str(out),"Candidate ready. Listen, then save it if you like it."
+    return str(out),str(out),"Candidate ready. It should autoplay. Use Try again for another variation, or choose another profile."
 
+
+
+def _decode_audio_for_whisper(path, sampling_rate=16000):
+    import numpy as np
+
+    result = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error",
+            "-i", str(path),
+            "-vn", "-ac", "1", "-ar", str(int(sampling_rate)),
+            "-f", "f32le", "pipe:1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.decode("utf-8", errors="replace").strip()
+            or "FFmpeg failed to decode the reference audio."
+        )
+
+    audio = np.frombuffer(result.stdout, dtype=np.float32).copy()
+    if audio.size == 0:
+        raise RuntimeError("No audio samples were decoded from the reference.")
+    return audio
 
 
 def transcribe_clone_reference(reference_wav,language="Burmese / Myanmar"):
@@ -102,7 +159,8 @@ def transcribe_clone_reference(reference_wav,language="Burmese / Myanmar"):
     code={"English":"en","Thai":"th","Japanese":"ja","Chinese":"zh"}.get(str(language))
     device="cuda" if _cuda_available() else "cpu"
     model=WhisperModel("large-v3",device=device,compute_type="float16" if device=="cuda" else "int8")
-    segments,_=model.transcribe(str(reference_wav),language=code,beam_size=5,vad_filter=True)
+    audio_input=_decode_audio_for_whisper(reference_wav,16000)
+    segments,_=model.transcribe(audio_input,language=code,beam_size=5,vad_filter=True)
     text=" ".join(s.text.strip() for s in segments if s.text.strip()).strip()
     return text,"Whisper large-v3 transcript ready."
 
@@ -121,6 +179,34 @@ def test_clone_voice(reference_wav,reference_text,test_text,cfg=2.0,steps=10):
     out=_folder("clone-test")/"test.wav"
     _generate_one(test_text,out,role="clone",clone_wav=reference_wav,clone_text=reference_text,cfg=cfg,steps=steps)
     return str(out),"Clone test ready."
+
+def use_profile_candidate(profile,candidate_path,transcript=""):
+    """Promote the audition WAV into a stable reference voice for translation."""
+    if not candidate_path or not Path(candidate_path).is_file():
+        raise ValueError("Generate a voice candidate first.")
+
+    profile_name = str(profile or "Designed Voice").strip() or "Designed Voice"
+    # Keep one obvious active entry per profile instead of filling the library
+    # with every audition attempt.
+    selected_name = f"Selected • {profile_name}"
+    delete_voice(selected_name)
+
+    item = save_voice(
+        selected_name,
+        candidate_path,
+        transcript=transcript,
+        kind="designed",
+    )
+    return (
+        role_choices(),
+        item["name"],
+        (
+            f"✅ Using {item['name']} for video translation. "
+            "The generated candidate is now the reference voice, so the same "
+            "voice is reused across subtitle segments."
+        ),
+    )
+
 
 def save_candidate_voice(name,candidate_path,transcript=""):
     item=save_voice(name,candidate_path,transcript=transcript,kind="designed")
@@ -150,7 +236,9 @@ def stream_voiceover(script,role,delivery,custom,generation_speed,cfg,steps,chun
         tasks.append({"chunk_index":i,"output_path":str(folder/f"raw_{i:04d}.wav"),
                       "kwargs":make_generation_kwargs(chunk,reference_wav=info.get("wav"),reference_text=info.get("transcript",""),
                                                        control_instruction=direction,cfg_value=cfg,inference_timesteps=steps)})
-    prepared=[]; service=DualGPUVoxCPM(model_dir=model_path_from_env())
+    prepared=[]
+    release_studio_service()
+    service=DualGPUVoxCPM(model_dir=model_path_from_env())
     try:
         for n,result in enumerate(service.iter_results(tasks),1):
             raw=result["output_path"]; ready=folder/f"ready_{result['chunk_index']:04d}.wav"
