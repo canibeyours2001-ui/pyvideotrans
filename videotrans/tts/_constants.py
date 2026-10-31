@@ -62,6 +62,8 @@ TTS_API = 35
 # 在线API
 SILICONFLOW_API = 36
 OPENROUTER_API = 37
+# Native GPU batch provider (not a Gradio API)
+VOXCPM2_KAGGLE_TTS = 38
 
 # 支持克隆的渠道，即存在 clone 配音角色
 SUPPORT_CLONE = [
@@ -71,6 +73,7 @@ SUPPORT_CLONE = [
     HIGGS_AUDIO_TTS,
     INDEX_TTS,
     VOXCPM_TTS,
+    VOXCPM2_KAGGLE_TTS,
     SPARK_TTS,
     CHATTERBOX_TTS,
     GPTSOVITS_TTS,
@@ -153,6 +156,7 @@ ID_NAME_DICT = {
     TTS_API: ChannelProvider(tr("Customize API"), imp="._ttsapi", key_name="ttsapi_url", win="ttsapi"),
     SILICONFLOW_API: ChannelProvider(tr("SiliconFlow"), imp="._siliconflow", key_name="guiji_key", win="siliconflow" ),
     OPENROUTER_API: ChannelProvider("OpenRouter", imp="._openrouter", key_name="openrouter_key", win="openrouter" ),
+    VOXCPM2_KAGGLE_TTS: ChannelProvider("VoxCPM2(Kaggle GPU batch)", imp="._voxcpm2kaggle"),
 }
 
 # 强制保持按照每个常量值大小排序
