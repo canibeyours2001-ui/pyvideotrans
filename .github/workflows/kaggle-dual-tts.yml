@@ -1,0 +1,23 @@
+name: Validate Kaggle Edge and VoxCPM2 dubbing
+on:
+  push:
+    branches:
+      - feature/kaggle-edge-voxcpm2-dubbing
+  pull_request:
+    paths:
+      - "videotrans/tts/_voxcpm2kaggle.py"
+      - "videotrans/tts/_constants.py"
+      - "tools/kaggle_video_dub_job.py"
+      - "tools/test_kaggle_dual_tts.py"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Validate provider and launcher without GPU or API calls
+        run: python tools/test_kaggle_dual_tts.py
+      - name: Compile Python files
+        run: python -m py_compile videotrans/tts/_voxcpm2kaggle.py videotrans/tts/_constants.py tools/kaggle_video_dub_job.py
